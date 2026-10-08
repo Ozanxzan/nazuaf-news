@@ -23,8 +23,18 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/refresh") {
-      if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
-      return Response.json(await updateFeeds(env));
+      // Allow manual refresh from a browser (GET) as well as API refresh (POST).
+      // The scheduled Cron trigger remains independent and still runs every 3 hours.
+      if (request.method !== "GET" && request.method !== "POST") {
+        return new Response("Method Not Allowed", { status: 405 });
+      }
+
+      const result = await updateFeeds(env);
+      return Response.json({
+        ok: true,
+        manual: request.method === "GET",
+        ...result
+      });
     }
 
     if (url.pathname === "/api/articles") {
