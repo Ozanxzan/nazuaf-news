@@ -1,32 +1,11 @@
-# Nazuaf News – GitHub Actions ingestion fix
+# Nazuaf News image/description fix
 
-This version moves RSS fetching out of the Cloudflare Worker and into GitHub Actions.
+Replace `scripts/fetch_news.py` with this version and commit it to `main`.
 
-## 1. Worker secret
+It:
+- extracts `media:content` / `media:thumbnail` / RSS enclosures
+- extracts image URLs embedded in Google News descriptions
+- decodes escaped HTML before cleaning descriptions
+- reports how many fetched articles contain images
 
-```bash
-npx wrangler secret put INGEST_TOKEN
-```
-
-Enter a strong random token.
-
-## 2. Deploy Worker
-
-```bash
-npx wrangler deploy
-```
-
-## 3. GitHub Actions secrets
-
-Repository → Settings → Secrets and variables → Actions → New repository secret:
-
-- `NEWS_INGEST_URL` = `https://nazuaf-news.id-faauzan.workers.dev/api/ingest`
-- `NEWS_INGEST_TOKEN` = the same token used for `INGEST_TOKEN`
-
-Use `https://news.nazuaf.com/api/ingest` instead if the custom domain is active.
-
-## 4. Manual test
-
-GitHub → Actions → Update Nazuaf News → Run workflow.
-
-The workflow also runs automatically every 3 hours.
+After commit, GitHub Actions will fetch fresh records and ingest image URLs into D1.
