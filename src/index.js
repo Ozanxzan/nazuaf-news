@@ -40,54 +40,79 @@ export default {
 
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
 
-      // Update existing records by title+source first. This lets the new fetcher
-      // replace old Google News redirect URLs with the resolved publisher URL and
-      // fill image_url for records already in D1.
-      const updateStatements = articles
-        .filter((a) => a?.title && a?.url)
-        .map((a) =>
-          env.DB.prepare(`
-            UPDATE articles
-            SET url = ?,
-                description = COALESCE(?, description),
-                image_url = COALESCE(?, image_url),
-                published_at = COALESCE(?, published_at)
-            WHERE title = ? AND source = ?
-          `).bind(
-            String(a.url).slice(0, 2000),
-            a.description ? String(a.description).slice(0, 500) : null,
-            a.image_url ? String(a.image_url).slice(0, 2000) : null,
-            a.published_at ? String(a.published_at).slice(0, 100) : null,
-            String(a.title).slice(0, 500),
-            String(a.source || "Unknown").slice(0, 120)
-          )
-        );
+      // Update existing records by title+source.
+      // We only replace the URL when the new publisher URL is not already
+      // owned by another row. This prevents SQLite UNIQUE(url) conflicts.
+      const validArticles = articles.filter((a) => a?.title && a?.url);
 
-      if (updateStatements.length) {
-        await env.DB.batch(updateStatements);
+      const updateStatements = validArticles.map((a) =>
+        env.DB.prepare(`
+          UPDATE articles
+          SET url = CASE
+                WHEN NOT EXISTS (
+                  SELECT 1 FROM articles other
+                  WHERE other.url = ? AND other.id != articles.id
+                ) THEN ?
+                ELSE articles.url
+              END,
+              description = COALESCE(?, description),
+              image_url = COALESCE(?, image_url),
+              published_at = COALESCE(?, published_at)
+          WHERE title = ? AND source = ?
+        `).bind(
+          String(a.url).slice(0, 2000),
+          String(a.url).slice(0, 2000),
+          a.description ? String(a.description).slice(0, 500) : null,
+          a.image_url ? String(a.image_url).slice(0, 2000) : null,
+          a.published_at ? String(a.published_at).slice(0, 100) : null,
+          String(a.title).slice(0, 500),
+          String(a.source || "Unknown").slice(0, 120)
+        )
+      );
+
+      try {
+        // D1 batch is atomic. Keep the batch comfortably below the statement limit.
+        for (let i = 0; i < updateStatements.length; i += 400) {
+          await env.DB.batch(updateStatements.slice(i, i + 400));
+        }
+      } catch (error) {
+        return json({
+          ok: false,
+          error: "D1 update failed",
+          detail: String(error?.message || error),
+        }, 500);
       }
 
-      // Insert anything that did not already exist.
-      const insertStatements = articles
-        .filter((a) => a?.title && a?.url)
-        .map((a) =>
-          env.DB.prepare(`
-            INSERT OR IGNORE INTO articles
-            (title, url, source, category, description, image_url, published_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `).bind(
-            String(a.title).slice(0, 500),
-            String(a.url).slice(0, 2000),
-            String(a.source || "Unknown").slice(0, 120),
-            String(a.category || "Berita").slice(0, 80),
-            a.description ? String(a.description).slice(0, 500) : null,
-            a.image_url ? String(a.image_url).slice(0, 2000) : null,
-            a.published_at ? String(a.published_at).slice(0, 100) : null
-          )
-        );
+      // Insert any article that is still missing.
+      const insertStatements = validArticles.map((a) =>
+        env.DB.prepare(`
+          INSERT OR IGNORE INTO articles
+          (title, url, source, category, description, image_url, published_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          String(a.title).slice(0, 500),
+          String(a.url).slice(0, 2000),
+          String(a.source || "Unknown").slice(0, 120),
+          String(a.category || "Berita").slice(0, 80),
+          a.description ? String(a.description).slice(0, 500) : null,
+          a.image_url ? String(a.image_url).slice(0, 2000) : null,
+          a.published_at ? String(a.published_at).slice(0, 100) : null
+        )
+      );
 
-      const results = insertStatements.length ? await env.DB.batch(insertStatements) : [];
-      const added = results.reduce((n, r) => n + (r.meta?.changes || 0), 0);
+      let added = 0;
+      try {
+        for (let i = 0; i < insertStatements.length; i += 400) {
+          const results = await env.DB.batch(insertStatements.slice(i, i + 400));
+          added += results.reduce((n, r) => n + (r.meta?.changes || 0), 0);
+        }
+      } catch (error) {
+        return json({
+          ok: false,
+          error: "D1 insert failed",
+          detail: String(error?.message || error),
+        }, 500);
+      }
 
       return json({
         ok: true,
