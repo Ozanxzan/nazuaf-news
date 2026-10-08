@@ -13,6 +13,19 @@ function json(data, status = 200) {
   });
 }
 
+function cleanDescription(value) {
+  return String(value == null ? "" : value)
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;/gi, "'")
+    .replace(/&amp;/gi, "&")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -39,41 +52,41 @@ export default {
       }
 
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
-
-      // Update existing records by title+source.
-      // We only replace the URL when the new publisher URL is not already
-      // owned by another row. This prevents SQLite UNIQUE(url) conflicts.
       const validArticles = articles.filter((a) => a?.title && a?.url);
 
-      const updateStatements = validArticles.map((a) =>
-        env.DB.prepare(`
+      let updated = 0;
+      let added = 0;
+
+      // First update existing rows by title + source.
+      // image_url is deliberately written whenever the scraper supplied one.
+      const updates = validArticles.map((a) => {
+        const title = String(a.title).slice(0, 500);
+        const source = String(a.source || "Unknown").slice(0, 120);
+        const publisherUrl = String(a.url).slice(0, 2000);
+        const description = a.description ? cleanDescription(a.description) : null;
+        const imageUrl = a.image_url ? String(a.image_url).slice(0, 2000) : null;
+        const publishedAt = a.published_at ? String(a.published_at).slice(0, 100) : null;
+
+        return env.DB.prepare(`
           UPDATE articles
-          SET url = CASE
-                WHEN NOT EXISTS (
-                  SELECT 1 FROM articles other
-                  WHERE other.url = ? AND other.id != articles.id
-                ) THEN ?
-                ELSE articles.url
-              END,
-              description = COALESCE(?, description),
-              image_url = COALESCE(?, image_url),
-              published_at = COALESCE(?, published_at)
+          SET
+            description = COALESCE(?, description),
+            image_url = COALESCE(?, image_url),
+            published_at = COALESCE(?, published_at)
           WHERE title = ? AND source = ?
         `).bind(
-          String(a.url).slice(0, 2000),
-          String(a.url).slice(0, 2000),
-          a.description ? String(a.description).slice(0, 500) : null,
-          a.image_url ? String(a.image_url).slice(0, 2000) : null,
-          a.published_at ? String(a.published_at).slice(0, 100) : null,
-          String(a.title).slice(0, 500),
-          String(a.source || "Unknown").slice(0, 120)
-        )
-      );
+          description,
+          imageUrl,
+          publishedAt,
+          title,
+          source
+        );
+      });
 
       try {
-        // D1 batch is atomic. Keep the batch comfortably below the statement limit.
-        for (let i = 0; i < updateStatements.length; i += 400) {
-          await env.DB.batch(updateStatements.slice(i, i + 400));
+        for (let i = 0; i < updates.length; i += 400) {
+          const results = await env.DB.batch(updates.slice(i, i + 400));
+          updated += results.reduce((n, r) => n + (r.meta?.changes || 0), 0);
         }
       } catch (error) {
         return json({
@@ -83,9 +96,10 @@ export default {
         }, 500);
       }
 
-      // Insert any article that is still missing.
-      const insertStatements = validArticles.map((a) =>
-        env.DB.prepare(`
+      // Insert missing rows.
+      const inserts = validArticles.map((a) => {
+        const description = a.description ? cleanDescription(a.description) : null;
+        return env.DB.prepare(`
           INSERT OR IGNORE INTO articles
           (title, url, source, category, description, image_url, published_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -94,16 +108,15 @@ export default {
           String(a.url).slice(0, 2000),
           String(a.source || "Unknown").slice(0, 120),
           String(a.category || "Berita").slice(0, 80),
-          a.description ? String(a.description).slice(0, 500) : null,
+          description,
           a.image_url ? String(a.image_url).slice(0, 2000) : null,
           a.published_at ? String(a.published_at).slice(0, 100) : null
-        )
-      );
+        );
+      });
 
-      let added = 0;
       try {
-        for (let i = 0; i < insertStatements.length; i += 400) {
-          const results = await env.DB.batch(insertStatements.slice(i, i + 400));
+        for (let i = 0; i < inserts.length; i += 400) {
+          const results = await env.DB.batch(inserts.slice(i, i + 400));
           added += results.reduce((n, r) => n + (r.meta?.changes || 0), 0);
         }
       } catch (error) {
@@ -117,8 +130,10 @@ export default {
       return json({
         ok: true,
         received: articles.length,
+        valid: validArticles.length,
+        updated,
         added,
-        updated_or_checked: articles.length,
+        with_images: validArticles.filter(a => a.image_url).length,
         updated_at: new Date().toISOString(),
       });
     }
@@ -226,153 +241,101 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
 <div id="categories" class="categories"></div>
 </div>
 </header>
-
 <main class="container">
 <div id="status" class="status">Memuat berita...</div>
 <div id="news" class="grid"></div>
 <div id="empty" class="empty" hidden>Tidak ada berita yang cocok.</div>
 <div class="more-wrap"><button id="more" class="more">Muat lebih banyak</button></div>
 </main>
-
 <footer>
 <div class="container">
 <div>Nazuaf News · Indonesian news aggregator</div>
 <div class="api">API: <a href="/api/articles">Articles</a> · <a href="/api/categories">Categories</a></div>
 </div>
 </footer>
-
 <script>
 (function(){
-  var state = { category:"", search:"", offset:0, loading:false, done:false, all:[] };
-  var pageSize = 24;
-
-  var newsEl = document.getElementById("news");
-  var emptyEl = document.getElementById("empty");
-  var statusEl = document.getElementById("status");
-  var moreEl = document.getElementById("more");
-  var categoriesEl = document.getElementById("categories");
-  var searchEl = document.getElementById("search");
+  var state={category:"",search:"",offset:0,loading:false,done:false,all:[]};
+  var pageSize=24;
+  var newsEl=document.getElementById("news"),emptyEl=document.getElementById("empty"),
+      statusEl=document.getElementById("status"),moreEl=document.getElementById("more"),
+      categoriesEl=document.getElementById("categories"),searchEl=document.getElementById("search");
 
   function escapeHtml(value){
-    return String(value == null ? "" : value)
-      .replace(/&/g,"&amp;").replace(/</g,"&lt;")
-      .replace(/>/g,"&gt;").replace(/"/g,"&quot;")
-      .replace(/'/g,"&#039;");
+    return String(value==null?"":value)
+      .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/"/g,"&quot;").replace(/'/g,"&#039;");
   }
-
   function formatDate(value){
-    if(!value) return "";
-    var d = new Date(value);
-    if(isNaN(d.getTime())) return value;
+    if(!value)return "";
+    var d=new Date(value); if(isNaN(d.getTime()))return value;
     return new Intl.DateTimeFormat("id-ID",{dateStyle:"medium",timeStyle:"short"}).format(d);
   }
-
   function matchesSearch(item){
-    if(!state.search) return true;
-    var hay = ((item.title || "") + " " + (item.description || "") + " " + (item.source || "")).toLowerCase();
-    return hay.indexOf(state.search) !== -1;
+    if(!state.search)return true;
+    var hay=((item.title||"")+" "+(item.description||"")+" "+(item.source||"")).toLowerCase();
+    return hay.indexOf(state.search)!==-1;
   }
-
   function render(){
-    var filtered = state.all.filter(matchesSearch);
-    emptyEl.hidden = filtered.length !== 0;
-
-    newsEl.innerHTML = filtered.map(function(item){
-      var image = item.image_url
-        ? '<img class="thumb" loading="lazy" src="' + escapeHtml(item.image_url) + '" alt="" onerror="this.style.display=\\'none\\'">'
+    var filtered=state.all.filter(matchesSearch);
+    emptyEl.hidden=filtered.length!==0;
+    newsEl.innerHTML=filtered.map(function(item){
+      var image=item.image_url
+        ? '<img class="thumb" loading="lazy" src="'+escapeHtml(item.image_url)+'" alt="" onerror="this.style.display=\\'none\\'">'
         : '<div class="noimg">Nazuaf News</div>';
-
-      return '<article class="card">' +
-        image +
-        '<div class="card-body">' +
-        '<div class="source">' + escapeHtml(item.source || "Berita") + '</div>' +
-        '<h2 class="title">' + escapeHtml(item.title) + '</h2>' +
-        (item.description ? '<p class="desc">' + escapeHtml(item.description) + '</p>' : '') +
-        '<div class="meta">' + escapeHtml(formatDate(item.published_at)) + '</div>' +
-        '<a class="read" href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener noreferrer">Baca berita →</a>' +
+      return '<article class="card">'+image+
+        '<div class="card-body"><div class="source">'+escapeHtml(item.source||"Berita")+'</div>'+
+        '<h2 class="title">'+escapeHtml(item.title)+'</h2>'+
+        (item.description?'<p class="desc">'+escapeHtml(item.description)+'</p>':'')+
+        '<div class="meta">'+escapeHtml(formatDate(item.published_at))+'</div>'+
+        '<a class="read" href="'+escapeHtml(item.url)+'" target="_blank" rel="noopener noreferrer">Baca berita →</a>'+
         '</div></article>';
     }).join("");
-
-    statusEl.textContent = filtered.length + " berita ditampilkan";
-    moreEl.disabled = state.loading || state.done;
-    moreEl.textContent = state.done ? "Semua berita sudah dimuat" : (state.loading ? "Memuat..." : "Muat lebih banyak");
+    statusEl.textContent=filtered.length+" berita ditampilkan";
+    moreEl.disabled=state.loading||state.done;
+    moreEl.textContent=state.done?"Semua berita sudah dimuat":(state.loading?"Memuat...":"Muat lebih banyak");
   }
-
   async function load(reset){
-    if(state.loading) return;
-    if(reset){
-      state.offset = 0;
-      state.done = false;
-      state.all = [];
-      newsEl.innerHTML = "";
-    }
-    if(state.done) return;
-
-    state.loading = true;
-    render();
-
+    if(state.loading)return;
+    if(reset){state.offset=0;state.done=false;state.all=[];newsEl.innerHTML="";}
+    if(state.done)return;
+    state.loading=true;render();
     try{
-      var params = new URLSearchParams();
-      params.set("limit", String(pageSize));
-      params.set("offset", String(state.offset));
-      if(state.category) params.set("category", state.category);
-
-      var response = await fetch("/api/articles?" + params.toString());
-      if(!response.ok) throw new Error("HTTP " + response.status);
-      var data = await response.json();
-      var items = Array.isArray(data.articles) ? data.articles : [];
-
-      state.all = reset ? items : state.all.concat(items);
-      state.offset += items.length;
-      if(items.length < pageSize) state.done = true;
-    }catch(error){
-      statusEl.textContent = "Gagal memuat berita. Coba lagi.";
-      console.error(error);
-    }finally{
-      state.loading = false;
-      render();
-    }
+      var params=new URLSearchParams();
+      params.set("limit",String(pageSize));params.set("offset",String(state.offset));
+      if(state.category)params.set("category",state.category);
+      var response=await fetch("/api/articles?"+params.toString());
+      if(!response.ok)throw new Error("HTTP "+response.status);
+      var data=await response.json(),items=Array.isArray(data.articles)?data.articles:[];
+      state.all=reset?items:state.all.concat(items);state.offset+=items.length;
+      if(items.length<pageSize)state.done=true;
+    }catch(error){statusEl.textContent="Gagal memuat berita. Coba lagi.";console.error(error);}
+    finally{state.loading=false;render();}
   }
-
   async function loadCategories(){
     try{
-      var response = await fetch("/api/categories");
-      var data = await response.json();
-      var items = Array.isArray(data.categories) ? data.categories : [];
-      var html = '<button class="cat active" data-category="">Semua</button>';
-      html += items.map(function(x){
-        return '<button class="cat" data-category="' + escapeHtml(x.category) + '">' +
-          escapeHtml(x.category) + ' <span>(' + escapeHtml(x.count) + ')</span></button>';
+      var response=await fetch("/api/categories"),data=await response.json();
+      var items=Array.isArray(data.categories)?data.categories:[];
+      var html='<button class="cat active" data-category="">Semua</button>';
+      html+=items.map(function(x){
+        return '<button class="cat" data-category="'+escapeHtml(x.category)+'">'+escapeHtml(x.category)+' <span>('+escapeHtml(x.count)+')</span></button>';
       }).join("");
-      categoriesEl.innerHTML = html;
-
-      categoriesEl.addEventListener("click", function(event){
-        var button = event.target.closest(".cat");
-        if(!button) return;
-        state.category = button.getAttribute("data-category") || "";
+      categoriesEl.innerHTML=html;
+      categoriesEl.addEventListener("click",function(event){
+        var button=event.target.closest(".cat");if(!button)return;
+        state.category=button.getAttribute("data-category")||"";
         categoriesEl.querySelectorAll(".cat").forEach(function(x){x.classList.remove("active");});
-        button.classList.add("active");
-        load(true);
+        button.classList.add("active");load(true);
       });
-    }catch(error){
-      categoriesEl.innerHTML = '<button class="cat active">Semua</button>';
-      console.error(error);
-    }
+    }catch(error){categoriesEl.innerHTML='<button class="cat active">Semua</button>';console.error(error);}
   }
-
   var searchTimer;
-  searchEl.addEventListener("input", function(){
+  searchEl.addEventListener("input",function(){
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(function(){
-      state.search = searchEl.value.trim().toLowerCase();
-      render();
-    },120);
+    searchTimer=setTimeout(function(){state.search=searchEl.value.trim().toLowerCase();render();},120);
   });
-
-  moreEl.addEventListener("click", function(){ load(false); });
-
-  loadCategories();
-  load(true);
+  moreEl.addEventListener("click",function(){load(false);});
+  loadCategories();load(true);
 })();
 </script>
 </body>
