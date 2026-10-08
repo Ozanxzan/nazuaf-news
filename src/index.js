@@ -57,15 +57,32 @@ export default {
       let updated = 0;
       let added = 0;
 
-      // First update existing rows by title + source.
-      // image_url is deliberately written whenever the scraper supplied one.
+      // Update existing rows using the original Google News URL first.
+      // This is the stable identifier already stored in older rows.
+      // Fall back to title + source only when google_url is unavailable.
       const updates = validArticles.map((a) => {
         const title = String(a.title).slice(0, 500);
         const source = String(a.source || "Unknown").slice(0, 120);
-        const publisherUrl = String(a.url).slice(0, 2000);
+        const googleUrl = a.google_url ? String(a.google_url).slice(0, 2000) : null;
         const description = a.description ? cleanDescription(a.description) : null;
         const imageUrl = a.image_url ? String(a.image_url).slice(0, 2000) : null;
         const publishedAt = a.published_at ? String(a.published_at).slice(0, 100) : null;
+
+        if (googleUrl) {
+          return env.DB.prepare(`
+            UPDATE articles
+            SET
+              description = COALESCE(?, description),
+              image_url = COALESCE(?, image_url),
+              published_at = COALESCE(?, published_at)
+            WHERE url = ?
+          `).bind(
+            description,
+            imageUrl,
+            publishedAt,
+            googleUrl
+          );
+        }
 
         return env.DB.prepare(`
           UPDATE articles
