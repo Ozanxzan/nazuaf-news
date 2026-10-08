@@ -70,9 +70,10 @@ def fetch_bytes(url, timeout=12):
         return response.geturl(), response.read(), response.headers.get("Content-Type", "")
 
 def resolve_article(article):
+    # Keep article["url"] unchanged: it is the original Google News RSS URL
+    # stored in D1 and is the stable key used to find/update the existing row.
     try:
-        original_url = article.get("google_url") or article["url"]
-        final_url, data, content_type = fetch_bytes(original_url, timeout=12)
+        final_url, data, content_type = fetch_bytes(article["url"], timeout=12)
         if not final_url.startswith(("http://", "https://")):
             return article
 
@@ -97,10 +98,11 @@ def resolve_article(article):
         if description:
             article["description"] = description
 
-        article["url"] = final_url[:2000]
-        article["google_url"] = original_url[:2000]
+        # Keep the resolved publisher URL separately for future use/debugging.
+        article["publisher_url"] = final_url[:2000]
         return article
-    except Exception:
+    except Exception as exc:
+        article["resolve_error"] = str(exc)[:200]
         return article
 
 def parse_feed(data, source, category):
@@ -118,11 +120,9 @@ def parse_feed(data, source, category):
             "{http://www.w3.org/2005/Atom}published","{http://www.w3.org/2005/Atom}updated"])
         if not title or not link:
             continue
-        google_url = html.unescape(link)[:2000]
         output.append({
             "title": clean_html(title)[:500],
-            "url": google_url,
-            "google_url": google_url,
+            "url": html.unescape(link)[:2000],
             "source": source,
             "category": category,
             "description": None,
@@ -157,6 +157,7 @@ def main():
     resolved.sort(key=lambda a: (a.get("published_at") or "", a.get("title") or ""), reverse=True)
     articles = resolved[:500]
     with_images = sum(1 for a in articles if a.get("image_url"))
+    with_publisher_urls = sum(1 for a in articles if a.get("publisher_url"))
 
     payload = json.dumps({"articles": articles}, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
@@ -170,7 +171,8 @@ def main():
         print(f"INGEST FAILED: {exc}")
         return 1
 
-    print(f"Fetched {len(articles)} unique articles; {with_images} have images; {failures}/{len(FEEDS)} feeds failed.")
+    print(f"Fetched {len(articles)} unique articles; {with_images} have images; "
+          f"{with_publisher_urls} publisher URLs resolved; {failures}/{len(FEEDS)} feeds failed.")
     return 0 if articles or failures < len(FEEDS) else 1
 
 if __name__ == "__main__":
