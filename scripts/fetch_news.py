@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import concurrent.futures
 import html
 import json
 import os
@@ -28,13 +29,21 @@ FEEDS = [
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; NazuafNewsBot/1.0; +https://news.nazuaf.com)"
+    "User-Agent": "Mozilla/5.0 (compatible; NazuafNewsBot/1.0; +https://news.nazuaf.com)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-MEDIA_NS = {
-    "media": "http://search.yahoo.com/mrss/",
-    "content": "http://purl.org/rss/1.0/modules/content/",
-}
+IMAGE_PATTERNS = [
+    re.compile(r'<meta[^>]+property=["\']og:image(?::secure_url)?["\'][^>]+content=["\']([^"\']+)["\']', re.I),
+    re.compile(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image(?::secure_url)?["\']', re.I),
+    re.compile(r'<meta[^>]+name=["\']twitter:image(?::src)?["\'][^>]+content=["\']([^"\']+)["\']', re.I),
+    re.compile(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']twitter:image(?::src)?["\']', re.I),
+]
+
+DESCRIPTION_PATTERNS = [
+    re.compile(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']*)["\']', re.I),
+    re.compile(r'<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']og:description["\']', re.I),
+]
 
 
 def clean_html(value):
@@ -51,42 +60,6 @@ def first_text(elem, names):
     return ""
 
 
-def find_image(elem, raw_description=""):
-    # Common RSS media fields.
-    for xpath in [
-        "media:content",
-        "media:thumbnail",
-        "media:group/media:content",
-        "media:group/media:thumbnail",
-    ]:
-        child = elem.find(xpath, MEDIA_NS)
-        if child is not None:
-            url = child.attrib.get("url") or child.attrib.get("href")
-            if url:
-                return html.unescape(url.strip())[:2000]
-
-    # Standard RSS enclosure.
-    enclosure = elem.find("enclosure")
-    if enclosure is not None:
-        url = enclosure.attrib.get("url")
-        mime = (enclosure.attrib.get("type") or "").lower()
-        if url and (mime.startswith("image/") or re.search(r"\.(?:jpe?g|png|webp|gif)(?:\?|$)", url, re.I)):
-            return html.unescape(url.strip())[:2000]
-
-    # Google News often puts an escaped <img src="..."> inside description.
-    decoded = html.unescape(raw_description or "")
-    match = re.search(r"<img[^>]+(?:src|data-src)=['\"]([^'\"]+)['\"]", decoded, re.I)
-    if match:
-        return html.unescape(match.group(1).strip())[:2000]
-
-    # Fallback for a bare image URL in the description.
-    match = re.search(r"https?://[^\s\"'<>]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s\"'<>]*)?", decoded, re.I)
-    if match:
-        return html.unescape(match.group(0).strip())[:2000]
-
-    return None
-
-
 def parse_date(value):
     if not value:
         return None
@@ -94,6 +67,54 @@ def parse_date(value):
         return parsedate_to_datetime(value).isoformat()
     except Exception:
         return value
+
+
+def fetch_bytes(url, timeout=12):
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        final_url = response.geturl()
+        data = response.read()
+        content_type = response.headers.get("Content-Type", "")
+        return final_url, data, content_type
+
+
+def resolve_article(article):
+    google_url = article["url"]
+    try:
+        final_url, data, content_type = fetch_bytes(google_url, timeout=12)
+        if not final_url.startswith(("http://", "https://")):
+            return article
+
+        # Only inspect HTML pages for Open Graph metadata.
+        sample = data[:1000000].decode("utf-8", errors="ignore")
+        image = None
+        description = None
+
+        for pattern in IMAGE_PATTERNS:
+            match = pattern.search(sample)
+            if match:
+                image = html.unescape(match.group(1)).strip()
+                break
+
+        for pattern in DESCRIPTION_PATTERNS:
+            match = pattern.search(sample)
+            if match:
+                description = clean_html(match.group(1))[:500]
+                break
+
+        # Resolve relative image URLs if a publisher uses them.
+        if image:
+            image = urllib.parse.urljoin(final_url, image)[:2000]
+
+        article["url"] = final_url[:2000]
+        if image:
+            article["image_url"] = image
+        if description and not article.get("description"):
+            article["description"] = description
+
+        return article
+    except Exception:
+        return article
 
 
 def parse_feed(data, source, category):
@@ -130,25 +151,17 @@ def parse_feed(data, source, category):
         if not title or not link:
             continue
 
-        image_url = find_image(item, description)
-
         output.append({
             "title": clean_html(title)[:500],
             "url": html.unescape(link)[:2000],
             "source": source,
             "category": category,
-            "description": clean_html(description)[:500] or None,
-            "image_url": image_url,
+            "description": None,
+            "image_url": None,
             "published_at": parse_date(published),
         })
 
     return output
-
-
-def fetch(url):
-    req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=20) as response:
-        return response.read()
 
 
 def main():
@@ -170,7 +183,7 @@ def main():
 
         try:
             category = "Berita" if source not in {"Teknologi", "Gaming", "Sains"} else source
-            parsed = parse_feed(fetch(rss_url), source, category)
+            parsed = parse_feed(fetch_bytes(rss_url, timeout=20)[1], source, category)
 
             for article in parsed:
                 if article["url"] not in seen:
@@ -178,9 +191,20 @@ def main():
                     articles.append(article)
         except Exception as exc:
             failures += 1
-            print(f"FAILED {source}: {exc}")
+            print(f"FAILED FEED {source}: {exc}")
 
-    articles = articles[:500]
+    # Resolve publisher URLs and extract og:image concurrently.
+    resolved = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+        futures = [pool.submit(resolve_article, a) for a in articles[:500]]
+        for future in concurrent.futures.as_completed(futures):
+            resolved.append(future.result())
+
+    # Preserve deterministic order by title/date after concurrent processing.
+    resolved.sort(key=lambda a: (a.get("published_at") or "", a.get("title") or ""), reverse=True)
+    articles = resolved[:500]
+
+    with_images = sum(1 for a in articles if a.get("image_url"))
 
     payload = json.dumps({"articles": articles}, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
@@ -195,13 +219,12 @@ def main():
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=45) as response:
             print("INGEST:", response.read().decode("utf-8"))
     except Exception as exc:
         print(f"INGEST FAILED: {exc}")
         return 1
 
-    with_images = sum(1 for a in articles if a.get("image_url"))
     print(f"Fetched {len(articles)} unique articles; {with_images} have images; {failures}/{len(FEEDS)} feeds failed.")
     return 0 if articles or failures < len(FEEDS) else 1
 
