@@ -71,7 +71,8 @@ def fetch_bytes(url, timeout=12):
 
 def resolve_article(article):
     try:
-        final_url, data, content_type = fetch_bytes(article["url"], timeout=12)
+        original_url = article.get("google_url") or article["url"]
+        final_url, data, content_type = fetch_bytes(original_url, timeout=12)
         if not final_url.startswith(("http://", "https://")):
             return article
 
@@ -97,6 +98,7 @@ def resolve_article(article):
             article["description"] = description
 
         article["url"] = final_url[:2000]
+        article["google_url"] = original_url[:2000]
         return article
     except Exception:
         return article
@@ -116,9 +118,11 @@ def parse_feed(data, source, category):
             "{http://www.w3.org/2005/Atom}published","{http://www.w3.org/2005/Atom}updated"])
         if not title or not link:
             continue
+        google_url = html.unescape(link)[:2000]
         output.append({
             "title": clean_html(title)[:500],
-            "url": html.unescape(link)[:2000],
+            "url": google_url,
+            "google_url": google_url,
             "source": source,
             "category": category,
             "description": None,
