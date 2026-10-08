@@ -1,0 +1,14 @@
+name = "nazuaf-news"
+main = "src/index.js"
+compatibility_date = "2026-10-08"
+
+[vars]
+SITE_NAME = "Nazuaf News"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nazuaf-news"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[triggers]
+crons = ["0 */3 * * *"]
