@@ -9,6 +9,3 @@ SITE_NAME = "Nazuaf News"
 binding = "DB"
 database_name = "nazuaf-news"
 database_id = "bc282965-848b-4e08-9409-ffa2bc693859"
-
-[triggers]
-crons = ["0 */3 * * *"]

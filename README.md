@@ -1,39 +1,32 @@
-# Nazuaf News — Indonesia
+# Nazuaf News – GitHub Actions ingestion fix
 
-Versi ini khusus berita berbahasa Indonesia dan memakai RSS dari sejumlah portal Indonesia.
+This version moves RSS fetching out of the Cloudflare Worker and into GitHub Actions.
 
-## Sumber awal
-- ANTARA: terkini, tekno, ekonomi, dunia, olahraga
-- CNN Indonesia: nasional, ekonomi
-- CNBC Indonesia: news, market
-- Liputan6: news
-- Suara.com: news, bisnis
-- Republika: nasional, ekonomi
-- Media Indonesia
-- JawaPos: nasional, ekonomi
-
-## Setup
+## 1. Worker secret
 
 ```bash
-npx wrangler d1 create nazuaf-news
+npx wrangler secret put INGEST_TOKEN
 ```
 
-Masukkan `database_id` ke `wrangler.toml`, lalu:
+Enter a strong random token.
+
+## 2. Deploy Worker
 
 ```bash
-npx wrangler d1 execute nazuaf-news --remote --file=./schema.sql
 npx wrangler deploy
 ```
 
-Update pertama:
+## 3. GitHub Actions secrets
 
-```bash
-curl -X POST https://ALAMAT-WORKER/api/refresh
-```
+Repository → Settings → Secrets and variables → Actions → New repository secret:
 
-Cron berjalan otomatis setiap 3 jam.
+- `NEWS_INGEST_URL` = `https://nazuaf-news.id-faauzan.workers.dev/api/ingest`
+- `NEWS_INGEST_TOKEN` = the same token used for `INGEST_TOKEN`
 
-Custom domain:
-`news.nazuaf.com`
+Use `https://news.nazuaf.com/api/ingest` instead if the custom domain is active.
 
-Catatan: aggregator menyimpan metadata/ringkasan pendek dan tautan ke artikel asli; tidak menyalin artikel penuh.
+## 4. Manual test
+
+GitHub → Actions → Update Nazuaf News → Run workflow.
+
+The workflow also runs automatically every 3 hours.
