@@ -1,21 +1,17 @@
 const FEEDS = [
-  { name: "ANTARA", category: "Nasional", url: "https://www.antaranews.com/rss/terkini.xml" },
-  { name: "ANTARA", category: "Teknologi", url: "https://www.antaranews.com/rss/tekno.xml" },
-  { name: "ANTARA", category: "Ekonomi", url: "https://www.antaranews.com/rss/ekonomi.xml" },
-  { name: "ANTARA", category: "Dunia", url: "https://www.antaranews.com/rss/dunia.xml" },
-  { name: "ANTARA", category: "Olahraga", url: "https://www.antaranews.com/rss/olahraga-all-sport.xml" },
-  { name: "CNN Indonesia", category: "Nasional", url: "https://www.cnnindonesia.com/nasional/rss" },
-  { name: "CNN Indonesia", category: "Ekonomi", url: "https://www.cnnindonesia.com/ekonomi/rss" },
-  { name: "CNBC Indonesia", category: "Ekonomi", url: "https://www.cnbcindonesia.com/news/rss" },
-  { name: "CNBC Indonesia", category: "Market", url: "https://www.cnbcindonesia.com/market/rss/" },
-  { name: "Liputan6", category: "Berita", url: "https://feed.liputan6.com/rss/news" },
-  { name: "Suara.com", category: "Berita", url: "https://www.suara.com/rss/news" },
-  { name: "Suara.com", category: "Bisnis", url: "https://www.suara.com/rss/bisnis" },
-  { name: "Republika", category: "Nasional", url: "https://www.republika.co.id/rss/nasional/" },
-  { name: "Republika", category: "Ekonomi", url: "https://www.republika.co.id/rss/ekonomi/" },
-  { name: "Media Indonesia", category: "Berita", url: "https://mediaindonesia.com/feed" },
-  { name: "JawaPos", category: "Nasional", url: "https://www.jawapos.com/nasional/rss" },
-  { name: "JawaPos", category: "Ekonomi", url: "https://www.jawapos.com/ekonomi/rss" }
+  { name: "ANTARA", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Aantaranews.com+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "CNN Indonesia", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Acnnindonesia.com+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "CNBC Indonesia", category: "Ekonomi", url: "https://news.google.com/rss/search?q=site%3Acnbcindonesia.com+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Kompas.com", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Akompas.com+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "detikcom", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Adetik.com+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Tempo.co", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Atempo.co+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Liputan6", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Aliputan6.com+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Tirto.id", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Atirto.id+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Suara.com", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Asuara.com+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Republika", category: "Berita", url: "https://news.google.com/rss/search?q=site%3Arepublika.co.id+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Teknologi", category: "Teknologi", url: "https://news.google.com/rss/search?q=teknologi+AI+gadget+Indonesia+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Gaming", category: "Gaming", url: "https://news.google.com/rss/search?q=gaming+game+Indonesia+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" },
+  { name: "Sains", category: "Sains", url: "https://news.google.com/rss/search?q=sains+teknologi+Indonesia+when%3A1d&hl=id&gl=ID&ceid=ID%3Aid" }
 ];
 
 export default {
@@ -72,40 +68,52 @@ export default {
 async function updateFeeds(env) {
   let added = 0, failed = 0;
 
-  for (const feed of FEEDS) {
-    try {
-      const response = await fetch(feed.url, {
-        headers: { "User-Agent": "NazuafNews/1.0 (+https://news.nazuaf.com)" }
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const xml = await response.text();
-      const items = parseFeed(xml).slice(0, 40);
-
-      for (const item of items) {
-        const exists = await env.DB.prepare(
-          "SELECT id FROM articles WHERE url = ? LIMIT 1"
-        ).bind(item.url).first();
-        if (exists) continue;
-
-        await env.DB.prepare(`
-          INSERT INTO articles
-          (title, url, source, category, description, image_url, published_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          item.title, item.url, feed.name, feed.category,
-          item.description, item.image_url, item.published_at
-        ).run();
-
-        added++;
+  const results = await Promise.allSettled(FEEDS.map(async (feed) => {
+    const response = await fetch(feed.url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; NazuafNews/1.0; +https://news.nazuaf.com)",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*"
       }
-    } catch (e) {
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const xml = await response.text();
+    const items = parseFeed(xml).slice(0, 50);
+    let feedAdded = 0;
+
+    for (const item of items) {
+      const exists = await env.DB.prepare(
+        "SELECT id FROM articles WHERE url = ? LIMIT 1"
+      ).bind(item.url).first();
+      if (exists) continue;
+
+      await env.DB.prepare(`
+        INSERT INTO articles
+        (title, url, source, category, description, image_url, published_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        item.title,
+        item.url,
+        item.source || feed.name,
+        feed.category,
+        item.description,
+        item.image_url,
+        item.published_at
+      ).run();
+      feedAdded++;
+    }
+    return { feed: feed.name, added: feedAdded };
+  }));
+
+  for (const result of results) {
+    if (result.status === "fulfilled") added += result.value.added;
+    else {
       failed++;
-      console.error(`Feed failed: ${feed.name} ${feed.url}`, e);
+      console.error("Feed failed", result.reason);
     }
   }
 
-  return { added, failed, updated_at: new Date().toISOString() };
+  return { added, failed, feeds: FEEDS.length, updated_at: new Date().toISOString() };
 }
 
 function parseFeed(xml) {
@@ -113,6 +121,7 @@ function parseFeed(xml) {
   if (!doc) return [];
   return [...doc.querySelectorAll("item, entry")].map(node => {
     const title = clean(text(node, "title"));
+    const source = clean(text(node, "source"));
     const url = text(node, "link") ||
       node.querySelector("link")?.getAttribute("href") ||
       text(node, "guid");
@@ -124,7 +133,7 @@ function parseFeed(xml) {
       node.querySelector("media\\:content, content")?.getAttribute("url") ||
       node.querySelector("media\\:thumbnail, thumbnail")?.getAttribute("url") ||
       extractImage(rawDesc);
-    return { title, url, description, published_at, image_url };
+    return { title, url, source, description, published_at, image_url };
   }).filter(x => x.title && x.url);
 }
 
