@@ -1,16 +1,9 @@
-# Nazuaf News OG Image Fix
+# Nazuaf News – OG Image Fix v2
 
-Replace these two files in the repository:
+Replace these two files in the GitHub repository:
 - `src/index.js`
 - `scripts/fetch_news.py`
 
-This version:
-- resolves Google News redirect URLs to publisher URLs
-- fetches publisher pages concurrently
-- extracts `og:image` / `twitter:image`
-- extracts `og:description` when available
-- updates existing D1 rows by title + source
-- replaces old Google News URLs with resolved publisher URLs
-- inserts new articles without duplicates
+This version fixes the D1 HTTP 500 caused by URL UNIQUE conflicts when converting Google News URLs to publisher URLs. It checks for URL conflicts before updating and processes D1 batches in smaller groups.
 
-The image extraction relies on standard Open Graph metadata (`og:image`).
+After committing, wait for the Cloudflare Worker deployment, then run **Actions → Update Nazuaf News → Run workflow** manually.
