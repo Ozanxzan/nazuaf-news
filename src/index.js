@@ -39,7 +39,36 @@ export default {
       }
 
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
-      const statements = articles
+
+      // Update existing records by title+source first. This lets the new fetcher
+      // replace old Google News redirect URLs with the resolved publisher URL and
+      // fill image_url for records already in D1.
+      const updateStatements = articles
+        .filter((a) => a?.title && a?.url)
+        .map((a) =>
+          env.DB.prepare(`
+            UPDATE articles
+            SET url = ?,
+                description = COALESCE(?, description),
+                image_url = COALESCE(?, image_url),
+                published_at = COALESCE(?, published_at)
+            WHERE title = ? AND source = ?
+          `).bind(
+            String(a.url).slice(0, 2000),
+            a.description ? String(a.description).slice(0, 500) : null,
+            a.image_url ? String(a.image_url).slice(0, 2000) : null,
+            a.published_at ? String(a.published_at).slice(0, 100) : null,
+            String(a.title).slice(0, 500),
+            String(a.source || "Unknown").slice(0, 120)
+          )
+        );
+
+      if (updateStatements.length) {
+        await env.DB.batch(updateStatements);
+      }
+
+      // Insert anything that did not already exist.
+      const insertStatements = articles
         .filter((a) => a?.title && a?.url)
         .map((a) =>
           env.DB.prepare(`
@@ -57,13 +86,14 @@ export default {
           )
         );
 
-      const results = statements.length ? await env.DB.batch(statements) : [];
+      const results = insertStatements.length ? await env.DB.batch(insertStatements) : [];
       const added = results.reduce((n, r) => n + (r.meta?.changes || 0), 0);
 
       return json({
         ok: true,
         received: articles.length,
         added,
+        updated_or_checked: articles.length,
         updated_at: new Date().toISOString(),
       });
     }
@@ -270,7 +300,6 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
       state.all = reset ? items : state.all.concat(items);
       state.offset += items.length;
       if(items.length < pageSize) state.done = true;
-      statusEl.textContent = "Memuat berita...";
     }catch(error){
       statusEl.textContent = "Gagal memuat berita. Coba lagi.";
       console.error(error);
