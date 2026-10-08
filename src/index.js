@@ -66,79 +66,135 @@ export default {
 };
 
 async function updateFeeds(env) {
-  let added = 0, failed = 0;
+  let added = 0;
+  let failed = 0;
+  const errors = [];
 
-  const results = await Promise.allSettled(FEEDS.map(async (feed) => {
-    const response = await fetch(feed.url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; NazuafNews/1.0; +https://news.nazuaf.com)",
-        "Accept": "application/rss+xml, application/xml, text/xml, */*"
+  // Process feeds sequentially so multiple D1 writes do not contend for
+  // SQLite write locks. The Cron schedule is still every 3 hours.
+  for (const feed of FEEDS) {
+    try {
+      const response = await fetch(feed.url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; NazuafNews/1.0; +https://news.nazuaf.com)",
+          "Accept": "application/rss+xml, application/xml, text/xml, */*"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const xml = await response.text();
-    const items = parseFeed(xml).slice(0, 50);
-    let feedAdded = 0;
+      const xml = await response.text();
+      if (!xml || xml.length < 100) {
+        throw new Error(`Empty/invalid response (${xml.length} bytes)`);
+      }
 
-    for (const item of items) {
-      const exists = await env.DB.prepare(
-        "SELECT id FROM articles WHERE url = ? LIMIT 1"
-      ).bind(item.url).first();
-      if (exists) continue;
+      const items = parseFeed(xml).slice(0, 50);
+      let feedAdded = 0;
 
-      await env.DB.prepare(`
-        INSERT INTO articles
-        (title, url, source, category, description, image_url, published_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        item.title,
-        item.url,
-        item.source || feed.name,
-        feed.category,
-        item.description,
-        item.image_url,
-        item.published_at
-      ).run();
-      feedAdded++;
-    }
-    return { feed: feed.name, added: feedAdded };
-  }));
+      for (const item of items) {
+        const exists = await env.DB.prepare(
+          "SELECT id FROM articles WHERE url = ? LIMIT 1"
+        ).bind(item.url).first();
 
-  for (const result of results) {
-    if (result.status === "fulfilled") added += result.value.added;
-    else {
+        if (exists) continue;
+
+        await env.DB.prepare(`
+          INSERT INTO articles
+          (title, url, source, category, description, image_url, published_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          item.title,
+          item.url,
+          item.source || feed.name,
+          feed.category,
+          item.description,
+          item.image_url,
+          item.published_at
+        ).run();
+
+        feedAdded++;
+        added++;
+      }
+
+      console.log(`Feed OK: ${feed.name}; items=${items.length}; added=${feedAdded}`);
+    } catch (error) {
       failed++;
-      console.error("Feed failed", result.reason);
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push({ feed: feed.name, error: message });
+      console.error(`Feed failed: ${feed.name}`, message);
     }
   }
 
-  return { added, failed, feeds: FEEDS.length, updated_at: new Date().toISOString() };
+  return {
+    ok: failed === 0,
+    added,
+    failed,
+    feeds: FEEDS.length,
+    errors,
+    updated_at: new Date().toISOString()
+  };
 }
 
 function parseFeed(xml) {
-  const doc = new DOMParser().parseFromString(xml, "application/xml");
-  if (!doc) return [];
-  return [...doc.querySelectorAll("item, entry")].map(node => {
-    const title = clean(text(node, "title"));
-    const source = clean(text(node, "source"));
-    const url = text(node, "link") ||
-      node.querySelector("link")?.getAttribute("href") ||
-      text(node, "guid");
-    const rawDesc = text(node, "description") || text(node, "summary") || text(node, "content");
+  const items = [];
+  const blocks = xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi) || [];
+
+  for (const block of blocks) {
+    const title = clean(tagValue(block, "title"));
+    const source = clean(tagValue(block, "source"));
+    const url =
+      attrValue(block, "link", "href") ||
+      clean(tagValue(block, "link")) ||
+      clean(tagValue(block, "guid"));
+
+    const rawDesc =
+      tagValue(block, "description") ||
+      tagValue(block, "summary") ||
+      tagValue(block, "content");
+
     const description = clean(rawDesc).slice(0, 500);
-    const published_at = text(node, "pubDate") || text(node, "published") ||
-      text(node, "updated") || null;
+    const published_at =
+      clean(tagValue(block, "pubDate")) ||
+      clean(tagValue(block, "published")) ||
+      clean(tagValue(block, "updated")) ||
+      null;
+
     const image_url =
-      node.querySelector("media\\:content, content")?.getAttribute("url") ||
-      node.querySelector("media\\:thumbnail, thumbnail")?.getAttribute("url") ||
+      mediaUrl(block, "content") ||
+      mediaUrl(block, "thumbnail") ||
       extractImage(rawDesc);
-    return { title, url, source, description, published_at, image_url };
-  }).filter(x => x.title && x.url);
+
+    if (title && url) {
+      items.push({ title, url, source, description, published_at, image_url });
+    }
+  }
+
+  return items;
 }
 
-function text(node, selector) {
-  return node.querySelector(selector)?.textContent?.trim() || "";
+function tagValue(block, tag) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`<${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${escaped}>`, "i");
+  const match = block.match(re);
+  return match ? match[1].trim() : "";
+}
+
+function attrValue(block, tag, attr) {
+  const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`<${escapedTag}\\b([^>]*)>`, "i");
+  const match = block.match(re);
+  if (!match) return "";
+  const attrRe = new RegExp(`${attr}=["']([^"']+)["']`, "i");
+  const attrMatch = match[1].match(attrRe);
+  return attrMatch ? attrMatch[1].trim() : "";
+}
+
+function mediaUrl(block, name) {
+  const re = new RegExp(`<media:${name}\\b[^>]*?url=["']([^"']+)["'][^>]*/?>`, "i");
+  const match = block.match(re);
+  return match ? match[1].trim() : "";
 }
 
 function clean(value) {
