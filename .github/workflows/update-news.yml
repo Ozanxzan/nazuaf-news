@@ -1,1 +1,22 @@
+name: Update Nazuaf News
 
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-news:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch RSS and ingest into D1
+        env:
+          NEWS_INGEST_URL: ${{ secrets.NEWS_INGEST_URL }}
+          NEWS_INGEST_TOKEN: ${{ secrets.NEWS_INGEST_TOKEN }}
+        run: python3 scripts/fetch_news.py
