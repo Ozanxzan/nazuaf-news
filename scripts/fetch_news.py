@@ -22,7 +22,8 @@ HEADERS = {
 
 def clean_html(value):
     value = html.unescape(value or "")
-    return re.sub(r"\\s+", " ", re.sub(r"<[^>]+>", " ", value)).strip()
+    value = re.sub(r"<[^>]+>", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
 
 class MetaParser(HTMLParser):
     def __init__(self):
