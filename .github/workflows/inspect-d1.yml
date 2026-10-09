@@ -1,0 +1,90 @@
+name: Inspect Nazuaf News D1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect database
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.request
+          import urllib.error
+
+          token = os.environ.get("CF_API_TOKEN", "")
+          account = os.environ.get("CF_ACCOUNT_ID", "")
+          database = "bc282965-848b-4e08-9409-ffa2bc693859"
+
+          if not token or not account:
+              sys.exit("Missing Cloudflare API token or account ID secret.")
+
+          endpoint = (
+              "https://api.cloudflare.com/client/v4/accounts/"
+              + account + "/d1/database/" + database + "/query"
+          )
+
+          queries = [
+              (
+                  "COUNTS",
+                  """
+                  SELECT
+                    COUNT(*) AS total_articles,
+                    SUM(CASE WHEN image_url IS NULL OR TRIM(image_url) = ''
+                      THEN 1 ELSE 0 END) AS images_missing,
+                    SUM(CASE WHEN description IS NULL OR TRIM(description) = ''
+                      THEN 1 ELSE 0 END) AS descriptions_missing,
+                    SUM(CASE WHEN description LIKE
+                      '%Comprehensive up-to-date news coverage%'
+                      THEN 1 ELSE 0 END) AS generic_descriptions
+                  FROM articles
+                  """
+              ),
+              (
+                  "SAMPLES",
+                  """
+                  SELECT id, title, source, image_url,
+                         substr(description, 1, 140) AS description_preview
+                  FROM articles
+                  WHERE image_url IS NULL OR TRIM(image_url) = ''
+                     OR description LIKE '%Comprehensive up-to-date news coverage%'
+                  ORDER BY published_at DESC
+                  LIMIT 10
+                  """
+              )
+          ]
+
+          for label, sql in queries:
+              body = json.dumps({"sql": sql}).encode()
+              request = urllib.request.Request(
+                  endpoint,
+                  data=body,
+                  method="POST",
+                  headers={
+                      "Authorization": "Bearer " + token,
+                      "Content-Type": "application/json"
+                  }
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      result = json.load(response)
+              except urllib.error.HTTPError as error:
+                  print(label + " failed: HTTP " + str(error.code))
+                  print(error.read().decode("utf-8", "replace")[:1500])
+                  sys.exit(1)
+
+              print("\n=== " + label + " ===")
+              print(json.dumps(result, ensure_ascii=False, indent=2))
+              if not result.get("success"):
+                  sys.exit("Cloudflare D1 query failed.")
+          PY
