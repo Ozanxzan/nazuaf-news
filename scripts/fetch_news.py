@@ -134,7 +134,7 @@ def main():
     articles, seen, failures = [], set(), 0
     for source, query in FEEDS:
         rss = "https://news.google.com/rss/search?" + urllib.parse.urlencode({
-            "q": query + " when:1d", "hl": "id", "gl": "ID", "ceid": "ID:id"})
+            "q": query + " when:7d", "hl": "id", "gl": "ID", "ceid": "ID:id"})
         try:
             category = source if source in {"Teknologi", "Gaming", "Sains"} else "Berita"
             for a in parse_feed(fetch_bytes(rss, 20)[1], source, category):
