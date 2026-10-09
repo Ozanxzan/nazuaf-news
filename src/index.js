@@ -32,7 +32,7 @@ function cleanDescription(value) {
   text = text
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]*>/g, " ")
+    .replace(/<[^>]*(?:>|$)/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 500);
