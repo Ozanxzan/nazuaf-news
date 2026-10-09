@@ -70,6 +70,15 @@ def metadata(document, base_url):
     image = (p.meta.get("og:image:secure_url") or p.meta.get("og:image")
              or p.meta.get("twitter:image") or p.meta.get("twitter:image:src"))
     desc = p.meta.get("og:description") or p.meta.get("twitter:description")
+
+if desc:
+    normalized_desc = clean_html(desc).lower()
+    generic_phrases = (
+        "comprehensive up-to-date news coverage",
+        "aggregated from sources all over the world by google news",
+    )
+    if any(phrase in normalized_desc for phrase in generic_phrases):
+        desc = None
     if not image:
         for block in p.json_ld:
             try:
