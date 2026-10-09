@@ -94,8 +94,8 @@ export default {
               description = COALESCE(?, description),
               image_url = COALESCE(?, image_url),
               published_at = COALESCE(?, published_at)
-            WHERE url = ?
-          `).bind(description, imageUrl, publishedAt, googleUrl);
+            WHERE url = ? OR (title = ? AND source = ?)
+          `).bind(description, imageUrl, publishedAt, googleUrl, title, source);
         }
 
         return env.DB.prepare(`
