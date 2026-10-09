@@ -215,6 +215,7 @@ export default {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0b0f14">
 <meta name="description" content="Nazuaf News - agregator berita Indonesia.">
 <title>${siteName}</title>
@@ -295,6 +296,13 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
       .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
       .replace(/"/g,"&quot;").replace(/'/g,"&#039;");
   }
+  function safeImageUrl(value){
+    if(!value)return "";
+    var imageUrl=String(value).trim();
+    // HTTPS pages should not request insecure HTTP images.
+    if(imageUrl.indexOf("http://")===0) imageUrl="https://"+imageUrl.slice(7);
+    return imageUrl;
+  }
   function formatDate(value){
     if(!value)return "";
     var d=new Date(value); if(isNaN(d.getTime()))return value;
@@ -309,8 +317,9 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
     var filtered=state.all.filter(matchesSearch);
     emptyEl.hidden=filtered.length!==0;
     newsEl.innerHTML=filtered.map(function(item){
-      var image=item.image_url
-        ? '<img class="thumb" loading="lazy" src="'+escapeHtml(item.image_url)+'" alt="" onerror="this.style.display=\\'none\\'">'
+      var imageUrl=safeImageUrl(item.image_url);
+      var image=imageUrl
+        ? '<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="'+escapeHtml(imageUrl)+'" alt="" onerror="this.style.display=\\'none\\'">'
         : '<div class="noimg">Nazuaf News</div>';
       return '<article class="card">'+image+
         '<div class="card-body"><div class="source">'+escapeHtml(item.source||"Berita")+'</div>'+
