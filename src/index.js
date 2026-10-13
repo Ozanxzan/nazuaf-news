@@ -281,7 +281,7 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
 <footer>
 <div class="container">
 <div>nazuaf news · indonesian news aggregator</div>
-<div class="api" id="visitor-info">load: menghitung... · negara: ${String(request.cf?.country || "unknown").toLowerCase()} · browser: mendeteksi...</div>
+<div class="api" id="visitor-info" data-country="${String(request.cf?.country || "unknown").toLowerCase()}">load: menghitung... · negara: ${String(request.cf?.country || "unknown").toLowerCase()} · browser: mendeteksi...</div>
 </div>
 </footer>
 <script>
@@ -319,7 +319,7 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
     newsEl.innerHTML=filtered.map(function(item){
       var imageUrl=safeImageUrl(item.image_url);
       var image=imageUrl
-        ? '<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="'+escapeHtml(imageUrl)+'" alt="" onerror="this.style.display=\\'none\\'">'
+        ? '<img class="thumb" loading="lazy" referrerpolicy="no-referrer" src="'+escapeHtml(imageUrl)+'" alt="" onerror="this.remove()">'
         : '<div class="noimg">Nazuaf News</div>';
       return '<article class="card">'+image+
         '<div class="card-body"><div class="source">'+escapeHtml(item.source||"Berita")+'</div>'+
@@ -375,26 +375,37 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
   moreEl.addEventListener("click",function(){load(false);});
 
   function detectBrowser(){
-    var ua=navigator.userAgent||"";
-    var browser="unknown";
-    if(/edg\//i.test(ua)) browser="edge";
-    else if(/opr\//i.test(ua)||/opera/i.test(ua)) browser="opera";
-    else if(/samsungbrowser/i.test(ua)) browser="samsung internet";
-    else if(/firefox\//i.test(ua)) browser="firefox";
-    else if(/crios\//i.test(ua)) browser="chrome";
-    else if(/chrome\//i.test(ua)&&!/edg\//i.test(ua)) browser="chrome";
-    else if(/safari\//i.test(ua)&&!/chrome\//i.test(ua)&&!/crios\//i.test(ua)) browser="safari";
-    return browser;
+    var ua = navigator.userAgent || "";
+    if (/edg\//i.test(ua)) return "edge";
+    if (/opr\//i.test(ua) || /opera/i.test(ua)) return "opera";
+    if (/samsungbrowser/i.test(ua)) return "samsung internet";
+    if (/firefox\//i.test(ua) || /fxios\//i.test(ua)) return "firefox";
+    if (/crios\//i.test(ua) || /chrome\//i.test(ua)) return "chrome";
+    if (/safari\//i.test(ua)) return "safari";
+    return "unknown";
   }
+
   function updateVisitorInfo(){
-    var infoEl=document.getElementById("visitor-info");
-    if(!infoEl)return;
-    var nav=performance.getEntriesByType&&performance.getEntriesByType("navigation");
-    var loadMs=nav&&nav.length?Math.round(nav[0].loadEventEnd||performance.now()):Math.round(performance.now());
-    infoEl.textContent="load: "+loadMs+" ms · negara: "+${JSON.stringify(String(request.cf?.country || "unknown").toLowerCase())}+" · browser: "+detectBrowser();
+    var infoEl = document.getElementById("visitor-info");
+    if (!infoEl) return;
+    var country = (infoEl.getAttribute("data-country") || "unknown").toLowerCase();
+    var loadMs = Math.round(performance.now());
+    try {
+      var entries = performance.getEntriesByType("navigation");
+      if (entries && entries.length && entries[0].loadEventEnd > 0) {
+        loadMs = Math.round(entries[0].loadEventEnd);
+      }
+    } catch (e) {}
+    infoEl.textContent = "load: " + loadMs + " ms · negara: " + country + " · browser: " + detectBrowser();
   }
-  window.addEventListener("load",updateVisitorInfo);
-  setTimeout(updateVisitorInfo,1500);
+
+  // The script is near the end of the document; run after load and retry once
+  // because loadEventEnd can initially be zero on some mobile browsers.
+  window.addEventListener("load", function(){
+    updateVisitorInfo();
+    setTimeout(updateVisitorInfo, 300);
+  });
+  setTimeout(updateVisitorInfo, 1000);
   loadCategories();load(true);
 })();
 </script>
