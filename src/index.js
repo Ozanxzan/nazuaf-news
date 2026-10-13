@@ -13,6 +13,16 @@ function json(data, status = 200) {
   });
 }
 
+function isGoogleNewsUrl(value) {
+  if (!value) return false;
+  try {
+    const hostname = new URL(String(value)).hostname.toLowerCase();
+    return hostname === "news.google.com" || hostname.endsWith(".news.google.com");
+  } catch {
+    return false;
+  }
+}
+
 function cleanDescription(value) {
   let text = String(value == null ? "" : value);
 
@@ -73,7 +83,11 @@ export default {
       }
 
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
-      const validArticles = articles.filter((a) => a?.title && a?.url);
+      // Exclude articles whose primary URL still points to Google News.
+      // google_url is retained for matching legacy rows that may already use publisher URLs.
+      const validArticles = articles.filter(
+        (a) => a?.title && a?.url && !isGoogleNewsUrl(a.url)
+      );
 
       let updated = 0;
       let added = 0;
@@ -176,15 +190,24 @@ export default {
       const offset = Math.max(Number(url.searchParams.get("offset")) || 0, 0);
       const category = url.searchParams.get("category");
 
+      const googleNewsExclusion = `
+        url NOT LIKE 'https://news.google.com/%'
+        AND url NOT LIKE 'http://news.google.com/%'
+        AND url != 'https://news.google.com'
+        AND url != 'http://news.google.com'
+      `;
+
       const query = category
         ? env.DB.prepare(`
             SELECT * FROM articles
             WHERE category = ?
+              AND ${googleNewsExclusion}
             ORDER BY published_at DESC, id DESC
             LIMIT ? OFFSET ?
           `).bind(category, limit, offset)
         : env.DB.prepare(`
             SELECT * FROM articles
+            WHERE ${googleNewsExclusion}
             ORDER BY published_at DESC, id DESC
             LIMIT ? OFFSET ?
           `).bind(limit, offset);
@@ -201,6 +224,10 @@ export default {
       const { results } = await env.DB.prepare(`
         SELECT category, COUNT(*) AS count
         FROM articles
+        WHERE url NOT LIKE 'https://news.google.com/%'
+          AND url NOT LIKE 'http://news.google.com/%'
+          AND url != 'https://news.google.com'
+          AND url != 'http://news.google.com'
         GROUP BY category
         ORDER BY count DESC
       `).all();
@@ -299,7 +326,6 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
   function safeImageUrl(value){
     if(!value)return "";
     var imageUrl=String(value).trim();
-    // HTTPS pages should not request insecure HTTP images.
     if(imageUrl.indexOf("http://")===0) imageUrl="https://"+imageUrl.slice(7);
     return imageUrl;
   }
