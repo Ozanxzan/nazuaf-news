@@ -285,6 +285,40 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
 </div>
 </footer>
 <script>
+(function () {
+  function browserName() {
+    var ua = (navigator.userAgent || "").toLowerCase();
+    if (ua.indexOf("edg/") >= 0) return "edge";
+    if (ua.indexOf("opr/") >= 0 || ua.indexOf("opera") >= 0) return "opera";
+    if (ua.indexOf("samsungbrowser") >= 0) return "samsung internet";
+    if (ua.indexOf("firefox/") >= 0 || ua.indexOf("fxios/") >= 0) return "firefox";
+    if (ua.indexOf("crios/") >= 0 || ua.indexOf("chrome/") >= 0) return "chrome";
+    if (ua.indexOf("safari/") >= 0) return "safari";
+    return "unknown";
+  }
+  function update() {
+    var el = document.getElementById("visitor-info");
+    if (!el) return;
+    var country = (el.getAttribute("data-country") || "unknown").toLowerCase();
+    var ms = Math.round(performance.now());
+    try {
+      var nav = performance.getEntriesByType && performance.getEntriesByType("navigation");
+      if (nav && nav.length) {
+        var candidate = nav[0].loadEventEnd || nav[0].domContentLoadedEventEnd || nav[0].responseEnd;
+        if (candidate > 0) ms = Math.round(candidate);
+      }
+    } catch (e) {}
+    el.textContent = "load: " + ms + " ms · negara: " + country + " · browser: " + browserName();
+  }
+  update();
+  document.addEventListener("DOMContentLoaded", update);
+  window.addEventListener("load", update);
+  setTimeout(update, 100);
+  setTimeout(update, 500);
+  setTimeout(update, 1500);
+})();
+</script>
+<script>
 (function(){
   var state={category:"",search:"",offset:0,loading:false,done:false,all:[]};
   var pageSize=24;
@@ -374,38 +408,6 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
   });
   moreEl.addEventListener("click",function(){load(false);});
 
-  function detectBrowser(){
-    var ua = navigator.userAgent || "";
-    if (/edg\//i.test(ua)) return "edge";
-    if (/opr\//i.test(ua) || /opera/i.test(ua)) return "opera";
-    if (/samsungbrowser/i.test(ua)) return "samsung internet";
-    if (/firefox\//i.test(ua) || /fxios\//i.test(ua)) return "firefox";
-    if (/crios\//i.test(ua) || /chrome\//i.test(ua)) return "chrome";
-    if (/safari\//i.test(ua)) return "safari";
-    return "unknown";
-  }
-
-  function updateVisitorInfo(){
-    var infoEl = document.getElementById("visitor-info");
-    if (!infoEl) return;
-    var country = (infoEl.getAttribute("data-country") || "unknown").toLowerCase();
-    var loadMs = Math.round(performance.now());
-    try {
-      var entries = performance.getEntriesByType("navigation");
-      if (entries && entries.length && entries[0].loadEventEnd > 0) {
-        loadMs = Math.round(entries[0].loadEventEnd);
-      }
-    } catch (e) {}
-    infoEl.textContent = "load: " + loadMs + " ms · negara: " + country + " · browser: " + detectBrowser();
-  }
-
-  // The script is near the end of the document; run after load and retry once
-  // because loadEventEnd can initially be zero on some mobile browsers.
-  window.addEventListener("load", function(){
-    updateVisitorInfo();
-    setTimeout(updateVisitorInfo, 300);
-  });
-  setTimeout(updateVisitorInfo, 1000);
   loadCategories();load(true);
 })();
 </script>
