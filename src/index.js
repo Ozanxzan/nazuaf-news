@@ -13,15 +13,6 @@ function json(data, status = 200) {
   });
 }
 
-function isGoogleNewsUrl(value) {
-  if (!value) return false;
-  try {
-    const hostname = new URL(String(value)).hostname.toLowerCase();
-    return hostname === "news.google.com" || hostname.endsWith(".news.google.com");
-  } catch {
-    return false;
-  }
-}
 
 function cleanDescription(value) {
   let text = String(value == null ? "" : value);
@@ -83,11 +74,7 @@ export default {
       }
 
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
-      // Exclude articles whose primary URL still points to Google News.
-      // google_url is retained for matching legacy rows that may already use publisher URLs.
-      const validArticles = articles.filter(
-        (a) => a?.title && a?.url && !isGoogleNewsUrl(a.url)
-      );
+      const validArticles = articles.filter((a) => a?.title && a?.url);
 
       let updated = 0;
       let added = 0;
@@ -190,24 +177,15 @@ export default {
       const offset = Math.max(Number(url.searchParams.get("offset")) || 0, 0);
       const category = url.searchParams.get("category");
 
-      const googleNewsExclusion = `
-        url NOT LIKE 'https://news.google.com/%'
-        AND url NOT LIKE 'http://news.google.com/%'
-        AND url != 'https://news.google.com'
-        AND url != 'http://news.google.com'
-      `;
-
       const query = category
         ? env.DB.prepare(`
             SELECT * FROM articles
             WHERE category = ?
-              AND ${googleNewsExclusion}
             ORDER BY published_at DESC, id DESC
             LIMIT ? OFFSET ?
           `).bind(category, limit, offset)
         : env.DB.prepare(`
             SELECT * FROM articles
-            WHERE ${googleNewsExclusion}
             ORDER BY published_at DESC, id DESC
             LIMIT ? OFFSET ?
           `).bind(limit, offset);
@@ -224,10 +202,6 @@ export default {
       const { results } = await env.DB.prepare(`
         SELECT category, COUNT(*) AS count
         FROM articles
-        WHERE url NOT LIKE 'https://news.google.com/%'
-          AND url NOT LIKE 'http://news.google.com/%'
-          AND url != 'https://news.google.com'
-          AND url != 'http://news.google.com'
         GROUP BY category
         ORDER BY count DESC
       `).all();
@@ -255,7 +229,7 @@ button,input{font:inherit}
 .container{width:min(1120px,calc(100% - 28px));margin:auto}
 header{padding:34px 0 24px;border-bottom:1px solid #1b222c;position:sticky;top:0;background:rgba(9,13,18,.94);backdrop-filter:blur(14px);z-index:10}
 .brand{display:flex;align-items:center;justify-content:space-between;gap:16px}
-.logo{font-size:30px;font-weight:800;letter-spacing:-1px}
+.logo{font-size:30px;font-weight:800;letter-spacing:-1px}.brand-link{color:inherit;text-decoration:none}
 .tagline{color:#8f9baa;margin:5px 0 0;font-size:14px}
 .search{margin-top:22px;display:flex;gap:10px}
 .search input{width:100%;background:#111720;border:1px solid #27303c;color:#fff;border-radius:12px;padding:13px 15px;outline:none}
@@ -292,7 +266,7 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
 <header>
 <div class="container">
 <div class="brand">
-<div><div class="logo">${siteName}</div><div class="tagline">Berita Indonesia, dikumpulkan dalam satu tempat.</div></div>
+<div><div class="logo"><a class="brand-link" href="https://nazuaf.com" aria-label="nazuaf.com">${siteName}</a></div><div class="tagline">Berita Indonesia, dikumpulkan dalam satu tempat.</div></div>
 </div>
 <div class="search"><input id="search" type="search" placeholder="Cari berita..." autocomplete="off"></div>
 <div id="categories" class="categories"></div>
@@ -306,8 +280,8 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
 </main>
 <footer>
 <div class="container">
-<div>Nazuaf News · Indonesian news aggregator</div>
-<div class="api">API: <a href="/api/articles">Articles</a> · <a href="/api/categories">Categories</a></div>
+<div>nazuaf news · indonesian news aggregator</div>
+<div class="api" id="visitor-info">load: menghitung... · negara: ${String(request.cf?.country || "unknown").toLowerCase()} · browser: mendeteksi...</div>
 </div>
 </footer>
 <script>
@@ -349,7 +323,7 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
         : '<div class="noimg">Nazuaf News</div>';
       return '<article class="card">'+image+
         '<div class="card-body"><div class="source">'+escapeHtml(item.source||"Berita")+'</div>'+
-        '<h2 class="title">'+escapeHtml(item.title)+'</h2>'+
+        '<h2 class="title"><a href="'+escapeHtml(item.url)+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(item.title)+'</a></h2>'+
         (item.description?'<p class="desc">'+escapeHtml(item.description)+'</p>':'')+
         '<div class="meta">'+escapeHtml(formatDate(item.published_at))+'</div>'+
         '<a class="read" href="'+escapeHtml(item.url)+'" target="_blank" rel="noopener noreferrer">Baca berita →</a>'+
@@ -399,6 +373,28 @@ footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:
     searchTimer=setTimeout(function(){state.search=searchEl.value.trim().toLowerCase();render();},120);
   });
   moreEl.addEventListener("click",function(){load(false);});
+
+  function detectBrowser(){
+    var ua=navigator.userAgent||"";
+    var browser="unknown";
+    if(/edg\//i.test(ua)) browser="edge";
+    else if(/opr\//i.test(ua)||/opera/i.test(ua)) browser="opera";
+    else if(/samsungbrowser/i.test(ua)) browser="samsung internet";
+    else if(/firefox\//i.test(ua)) browser="firefox";
+    else if(/crios\//i.test(ua)) browser="chrome";
+    else if(/chrome\//i.test(ua)&&!/edg\//i.test(ua)) browser="chrome";
+    else if(/safari\//i.test(ua)&&!/chrome\//i.test(ua)&&!/crios\//i.test(ua)) browser="safari";
+    return browser;
+  }
+  function updateVisitorInfo(){
+    var infoEl=document.getElementById("visitor-info");
+    if(!infoEl)return;
+    var nav=performance.getEntriesByType&&performance.getEntriesByType("navigation");
+    var loadMs=nav&&nav.length?Math.round(nav[0].loadEventEnd||performance.now()):Math.round(performance.now());
+    infoEl.textContent="load: "+loadMs+" ms · negara: "+${JSON.stringify(String(request.cf?.country || "unknown").toLowerCase())}+" · browser: "+detectBrowser();
+  }
+  window.addEventListener("load",updateVisitorInfo);
+  setTimeout(updateVisitorInfo,1500);
   loadCategories();load(true);
 })();
 </script>
