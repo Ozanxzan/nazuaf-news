@@ -5,11 +5,88 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-function json(data, status = 200) {
+const NEWS_SNAPSHOT_KEY = "public/news-snapshot-v1.json";
+const GLOBAL_SNAPSHOT_LIMIT = 2000;
+const CATEGORY_SNAPSHOT_LIMIT = 1000;
+const ARTICLE_COLUMNS = "id,title,url,source,category,description,image_url,published_at,created_at";
+
+function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", ...corsHeaders },
+    headers: { "Content-Type": "application/json; charset=utf-8", ...corsHeaders, ...extraHeaders },
   });
+}
+
+function apiCacheHeaders(tag, browserSeconds = 30, edgeSeconds = 120) {
+  return {
+    "Cache-Control": `public, max-age=${browserSeconds}, s-maxage=${edgeSeconds}, stale-while-revalidate=300`,
+    "Cache-Tag": tag,
+  };
+}
+
+async function readNewsSnapshot(env) {
+  if (!env.NEWS_CACHE) return null;
+  try {
+    const object = await env.NEWS_CACHE.get(NEWS_SNAPSHOT_KEY);
+    if (!object) return null;
+    const snapshot = JSON.parse(await object.text());
+    if (snapshot?.version !== 1 || !Array.isArray(snapshot.articles) || !Array.isArray(snapshot.categories) ||
+        !snapshot.byCategory || typeof snapshot.byCategory !== "object") return null;
+    return snapshot;
+  } catch (error) {
+    console.warn("Could not read Nazuaf News R2 snapshot:", String(error?.message || error));
+    return null;
+  }
+}
+
+async function rebuildNewsSnapshot(env) {
+  if (!env.NEWS_CACHE) return null;
+
+  const categoryResult = await env.DB.prepare(
+    "SELECT category, COUNT(*) AS count FROM articles GROUP BY category ORDER BY count DESC"
+  ).all();
+  const categories = categoryResult.results || [];
+  const latestResult = await env.DB.prepare(
+    `SELECT ${ARTICLE_COLUMNS} FROM articles ORDER BY published_at DESC, id DESC LIMIT ?`
+  ).bind(GLOBAL_SNAPSHOT_LIMIT).all();
+  const byCategory = Object.create(null);
+
+  // Category queries use the category/date composite index and only snapshot the newest items.
+  for (const item of categories) {
+    const category = String(item.category || "");
+    const result = await env.DB.prepare(
+      `SELECT ${ARTICLE_COLUMNS} FROM articles WHERE category = ? ORDER BY published_at DESC, id DESC LIMIT ?`
+    ).bind(category, CATEGORY_SNAPSHOT_LIMIT).all();
+    byCategory[category] = result.results || [];
+  }
+
+  const snapshot = {
+    version: 1,
+    generated_at: new Date().toISOString(),
+    articles: latestResult.results || [],
+    categories,
+    byCategory,
+  };
+  await env.NEWS_CACHE.put(NEWS_SNAPSHOT_KEY, JSON.stringify(snapshot), {
+    httpMetadata: {
+      contentType: "application/json; charset=utf-8",
+      cacheControl: "no-cache",
+    },
+  });
+  return snapshot;
+}
+
+async function ensureOptimizedIndexes(env) {
+  // These are idempotent and also upgrade the existing D1 database on the next ingest.
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_articles_title_source ON articles(title, source)"
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_articles_published_id ON articles(published_at DESC, id DESC)"
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_articles_category_published_id ON articles(category, published_at DESC, id DESC)"
+  ).run();
 }
 
 function cleanDescription(value) {
@@ -31,7 +108,7 @@ function cleanDescription(value) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
 
@@ -45,6 +122,12 @@ export default {
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
       const valid = articles.filter(a => a?.title && a?.url);
       let updated = 0, added = 0;
+
+      try {
+        await ensureOptimizedIndexes(env);
+      } catch (e) {
+        return json({ ok: false, error: "D1 index optimization failed", detail: String(e?.message || e) }, 500);
+      }
 
       const updates = valid.map(a => {
         const title = String(a.title).slice(0, 500);
@@ -93,35 +176,72 @@ export default {
           WHERE category = 'Berita'
             AND id NOT IN (
               SELECT id FROM articles WHERE category = 'Berita'
-              ORDER BY COALESCE(julianday(published_at), julianday(created_at), 0) DESC, id DESC
+              ORDER BY published_at DESC, id DESC
               LIMIT 1000
             )
         `).run();
       } catch (e) { return json({ ok: false, error: "D1 insert/retention cleanup failed", detail: String(e?.message || e) }, 500); }
 
+      let snapshotUpdated = false;
+      if (env.NEWS_CACHE) {
+        try {
+          await rebuildNewsSnapshot(env);
+          snapshotUpdated = true;
+        } catch (e) {
+          return json({ ok: false, database_saved: true, error: "D1 updated but R2 news snapshot refresh failed", detail: String(e?.message || e) }, 500);
+        }
+      }
+
+      // Invalidate the cached API responses when a new snapshot is published.
+      try {
+        if (ctx?.cache?.purge) {
+          const purgeResult = await ctx.cache.purge({ tags: ["news-articles", "news-categories"] });
+          if (purgeResult?.success === false) console.warn("Cache purge returned an unsuccessful result:", purgeResult.errors || []);
+        }
+      } catch (e) {
+        console.warn("Cache purge after ingest failed:", String(e?.message || e));
+      }
+
       return json({ ok: true, received: articles.length, valid: valid.length, updated, added,
-        with_images: valid.filter(a => a.image_url).length, updated_at: new Date().toISOString() });
+        with_images: valid.filter(a => a.image_url).length, snapshot_updated: snapshotUpdated,
+        updated_at: new Date().toISOString() });
     }
 
     if (url.pathname === "/api/refresh") {
-      return json({ ok: false, manual: true, message: "Feed fetching is handled by GitHub Actions. Run the Update Nazuaf News workflow for a manual refresh." }, 202);
+      return json({ ok: false, manual: true, message: "Feed fetching is handled by GitHub Actions. Run the Update Nazuaf News workflow for a manual refresh." }, 202, { "Cache-Control": "no-store" });
     }
 
     if (url.pathname === "/api/articles") {
       const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 24, 1), 100);
-      const offset = Math.max(Number(url.searchParams.get("offset")) || 0, 0);
+      const offsetValue = Number(url.searchParams.get("offset")) || 0;
+      const offset = Math.min(Math.max(offsetValue, 0), 1000000);
       const category = url.searchParams.get("category");
-      const order = " ORDER BY COALESCE(julianday(published_at), julianday(created_at), 0) DESC, id DESC LIMIT ? OFFSET ?";
+      const headers = apiCacheHeaders("news-articles", 30, 120);
+      const snapshot = await readNewsSnapshot(env);
+
+      if (snapshot) {
+        const collection = category
+          ? (snapshot.byCategory && snapshot.byCategory[category]) || []
+          : snapshot.articles;
+        const results = collection.slice(offset, offset + limit);
+        return json({ ok: true, articles: results.map(a => ({ ...a, description: cleanDescription(a.description) || null })), limit, offset }, 200, headers);
+      }
+
+      // Fallback for the first deploy or when R2 is unavailable. Indexes avoid full-table sorting.
+      const order = " ORDER BY published_at DESC, id DESC LIMIT ? OFFSET ?";
       const query = category
-        ? env.DB.prepare("SELECT * FROM articles WHERE category = ?" + order).bind(category, limit, offset)
-        : env.DB.prepare("SELECT * FROM articles" + order).bind(limit, offset);
+        ? env.DB.prepare(`SELECT ${ARTICLE_COLUMNS} FROM articles WHERE category = ?` + order).bind(category, limit, offset)
+        : env.DB.prepare(`SELECT ${ARTICLE_COLUMNS} FROM articles` + order).bind(limit, offset);
       const { results } = await query.all();
-      return json({ ok: true, articles: results.map(a => ({ ...a, description: cleanDescription(a.description) || null })), limit, offset });
+      return json({ ok: true, articles: results.map(a => ({ ...a, description: cleanDescription(a.description) || null })), limit, offset }, 200, headers);
     }
 
     if (url.pathname === "/api/categories") {
-      const { results } = await env.DB.prepare("SELECT category, COUNT(*) AS count FROM articles GROUP BY category ORDER BY count DESC").all();
-      return json({ ok: true, categories: results });
+      const snapshot = await readNewsSnapshot(env);
+      const categories = snapshot
+        ? snapshot.categories
+        : (await env.DB.prepare("SELECT category, COUNT(*) AS count FROM articles GROUP BY category ORDER BY count DESC").all()).results;
+      return json({ ok: true, categories }, 200, apiCacheHeaders("news-categories", 60, 300));
     }
 
     const siteName = env.SITE_NAME || "Nazuaf News";
@@ -172,6 +292,6 @@ async function loadCats(){try{var r=await fetch("/api/categories");if(!r.ok)thro
 cats.addEventListener("click",function(e){var b=e.target.closest(".cat");if(!b)return;s.category=b.getAttribute("data-category")||"";cats.querySelectorAll(".cat").forEach(function(x){x.classList.remove("active")});b.classList.add("active");load(true)})}catch(e){cats.innerHTML='<button class="cat active">Semua</button>';console.error(e)}}
 var timer;search.addEventListener("input",function(){clearTimeout(timer);timer=setTimeout(function(){s.search=search.value.trim().toLowerCase();render()},120)});more.addEventListener("click",function(){load(false)});loadCats();load(true)})();
 </script></body></html>`;
-    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders } });
+    return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...corsHeaders } });
   },
 };
