@@ -1,6 +1,10 @@
 name = "nazuaf-news"
 main = "src/index.js"
-compatibility_date = "2026-10-08"
+compatibility_date = "2026-10-28"
+
+# Edge-cache public API responses so repeated visitors do not rerun the Worker/D1 queries.
+[cache]
+enabled = true
 
 [vars]
 SITE_NAME = "Nazuaf News"
@@ -9,3 +13,8 @@ SITE_NAME = "Nazuaf News"
 binding = "DB"
 database_name = "nazuaf-news"
 database_id = "bc282965-848b-4e08-9409-ffa2bc693859"
+
+# Create this R2 bucket in the same Cloudflare account before deploying.
+[[r2_buckets]]
+binding = "NEWS_CACHE"
+bucket_name = "nazuaf-news-cache"

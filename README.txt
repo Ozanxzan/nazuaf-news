@@ -1,22 +1,22 @@
-NAZUAF NEWS — GEMINI IMAGE FIX + GNEWS INDONESIA
+NAZUAF NEWS — D1 ROWS READ OPTIMIZATION
 
-Isi ZIP:
-- src/index.js: Worker lengkap, dengan meta referrer no-referrer, referrerpolicy pada gambar, normalisasi URL gambar HTTP ke HTTPS, dan perbaikan Worker yang sudah ada di paket image-repair-v8.
-- scripts/fetch_news.py: pengumpul berita bergaya GNews untuk bahasa Indonesia / negara Indonesia, dengan 43 feed dan ekstraksi metadata gambar publisher.
+This build introduces:
+- Cloudflare Workers Cache for public API responses.
+- R2 snapshot storage for article lists and category counts, so ordinary page visits avoid D1 queries.
+- Index-friendly D1 queries and automatic creation of needed indexes during authenticated ingest.
+- Automatic snapshot rebuild after each successful news ingest.
 
-CARA PASANG DARI HP
-1. Ekstrak ZIP.
-2. Di repo Ozanxzan/nazuaf-news branch main, ganti src/index.js dengan file dari ZIP.
-3. Ganti scripts/fetch_news.py dengan file dari ZIP.
-4. Commit perubahan.
-5. Tunggu deployment Cloudflare Worker berstatus Ready.
-6. GitHub → Actions → Update Nazuaf News → Run workflow.
-7. Periksa https://nazuaf-news.id-faauzan.workers.dev/api/articles?limit=10
+SETUP (IMPORTANT)
+1. In Cloudflare Dashboard → R2 Object Storage, create a bucket named exactly:
+   nazuaf-news-cache
+2. Deploy this repository. The R2 binding is configured in wrangler.toml.
+3. Keep the existing D1 binding and GitHub Actions secrets unchanged.
+4. GitHub → Actions → Update Nazuaf News → Run workflow once after deployment, to generate the first R2 snapshot.
+5. Test:
+   https://nazuaf-news.id-faauzan.workers.dev/api/articles?limit=10
 
-JANGAN upload file .pyc. Tidak perlu mengubah wrangler.toml, database D1, atau secrets.
+The Worker continues to use D1 as the source of truth. It creates the necessary indexes on the next authenticated ingest. The R2 view includes up to 2,000 global articles and up to 1,000 per category; this limit does not delete older rows from D1. The existing retention rule for the exact "Berita" category remains unchanged.
 
-CATATAN
-- no-referrer dapat membantu situs yang memblokir hotlink berdasarkan Referer, tetapi tidak menjamin semua publisher mengizinkan gambar.
-- Mengubah HTTP menjadi HTTPS hanya membantu bila host gambar mendukung HTTPS.
-- Log "with_images" menghitung URL gambar yang dikirim, bukan memastikan gambar berhasil dimuat browser.
-- Paket ini belum dipasang otomatis di repo; upload file ke GitHub dan deploy seperti langkah di atas.
+If R2 snapshot refresh fails, the ingest response will say D1 was saved but the R2 snapshot failed. Fix the R2 binding and rerun the workflow.
+
+No secrets or API tokens are included in this ZIP.
