@@ -1,8 +1,10 @@
 # Nazuaf News — D1 Rows Read Optimization
 
-This build reduces repeat D1 reads by caching public API responses at Cloudflare's edge and serving prebuilt news snapshots from R2. D1 remains the source of truth; ingest still writes articles to D1 and refreshes the R2 snapshot.
+This build reduces repeat D1 reads by caching public API responses at Cloudflare's edge and serving prebuilt news snapshots from R2. D1 remains the source of truth; each cron run processes up to 20 unique articles per category across Berita, Bisnis, Nasional, Teknologi, Sains, Gaming, Olahraga, Hiburan, and Kesehatan, then refreshes the R2 snapshot.
 
 ## What changed
+
+- RSS ingestion now uses a fair per-category target of 20 unique articles per cron run for all nine site categories. It logs any category that has fewer than 20 distinct items available from its current feeds; it does not fabricate articles. `NEWS_PER_CATEGORY_LIMIT` can override the default.
 
 - `/api/articles` reads from a single R2 snapshot when available, then slices the requested page/category in the Worker instead of querying D1 for every page view.
 - `/api/categories` reads category names/counts from the same snapshot.
@@ -14,7 +16,7 @@ This build reduces repeat D1 reads by caching public API responses at Cloudflare
 
 ## Required setup before deployment
 
-1. In the same Cloudflare account as the `nazuaf-news` Worker, open **R2 Object Storage** and create a bucket named exactly `nazuaf-news-cache`.
+1. In the same Cloudflare account as the `nazuaf-news` Worker, ensure the bucket named exactly `nazuaf-news-cache` exists and is bound to the Worker as `NEWS_CACHE`.
 2. Deploy this repository. `wrangler.toml` binds that bucket to `NEWS_CACHE` and enables Workers Cache for cacheable HTTP responses.
 3. Keep the existing D1 binding and GitHub secrets unchanged (`NEWS_INGEST_URL` and `NEWS_INGEST_TOKEN`). The Worker creates the required indexes automatically on the next authenticated ingest run.
 4. After deployment, open **GitHub → Actions → Update Nazuaf News → Run workflow** once. This populates/refreshes the R2 snapshot from D1. Future scheduled imports refresh it automatically.
