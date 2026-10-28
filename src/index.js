@@ -8,6 +8,24 @@ const corsHeaders = {
 const NEWS_SNAPSHOT_KEY = "public/news-snapshot-v1.json";
 const GLOBAL_SNAPSHOT_LIMIT = 2000;
 const CATEGORY_SNAPSHOT_LIMIT = 1000;
+const SNAPSHOT_MAX_AGE_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TARGET_PER_CATEGORY = 20;
+const SITE_CATEGORIES = ["Berita", "Bisnis", "Nasional", "Teknologi", "Sains", "Gaming", "Olahraga", "Hiburan", "Kesehatan"];
+const FALLBACK_FEEDS = [
+  { category: "Gaming", source: "Babel Insight", url: "https://www.babelinsight.id/rss/game.xml" },
+  { category: "Gaming", source: "Gamedaim", url: "https://gamedaim.com/feed/" },
+  { category: "Gaming", source: "GGWP", url: "https://www.ggwp.id/feed/" },
+  { category: "Olahraga", source: "Inikata.co.id", url: "https://inikata.co.id/rss/olahraga.xml" },
+  { category: "Olahraga", source: "5News", url: "https://www.5news.co.id/rss/olahraga.xml" },
+  { category: "Olahraga", source: "Babel Insight", url: "https://www.babelinsight.id/rss/olahraga.xml" },
+  { category: "Hiburan", source: "ANTARA Lifestyle", url: "https://www.antaranews.com/rss/lifestyle.xml" },
+  { category: "Hiburan", source: "Inikata.co.id", url: "https://inikata.co.id/rss/hiburan.xml" },
+  { category: "Hiburan", source: "Inikata.co.id", url: "https://inikata.co.id/rss/gaya-hidup.xml" },
+  { category: "Hiburan", source: "Babel Insight", url: "https://www.babelinsight.id/rss/hiburan.xml" },
+  { category: "Kesehatan", source: "Inikata.co.id", url: "https://inikata.co.id/rss/kesehatan.xml" },
+  { category: "Kesehatan", source: "DetikHealth", url: "https://rss.detik.com/index.php/health" },
+];
 const ARTICLE_COLUMNS = "id,title,url,source,category,description,image_url,published_at,created_at";
 
 function json(data, status = 200, extraHeaders = {}) {
@@ -17,11 +35,125 @@ function json(data, status = 200, extraHeaders = {}) {
   });
 }
 
-function apiCacheHeaders(tag, browserSeconds = 30, edgeSeconds = 120) {
+function apiCacheHeaders(tag, maxAgeSeconds = 120) {
   return {
-    "Cache-Control": `public, max-age=${browserSeconds}, s-maxage=${edgeSeconds}, stale-while-revalidate=300`,
+    "Cache-Control": "public, max-age=30, s-maxage=" + maxAgeSeconds + ", stale-while-revalidate=300, stale-if-error=86400",
     "Cache-Tag": tag,
   };
+}
+
+function isRecentArticle(article, now = Date.now()) {
+  const published = Date.parse(article?.published_at || "");
+  return Number.isFinite(published) &&
+    published >= now - SNAPSHOT_MAX_AGE_DAYS * DAY_MS &&
+    published <= now + DAY_MS;
+}
+
+function snapshotCategories(snapshot) {
+  if (snapshot?.snapshot_schema_version === 2 && Array.isArray(snapshot.categories)) return snapshot.categories;
+  const byCategory = snapshot?.byCategory || {};
+  return SITE_CATEGORIES.map(category => ({
+    category,
+    count: Array.isArray(byCategory[category]) ? byCategory[category].filter(isRecentArticle).length : 0,
+  })).sort((a, b) => b.count - a.count);
+}
+
+function snapshotUnavailable() {
+  return json(
+    { ok: false, error: "News snapshot is unavailable", code: "SNAPSHOT_UNAVAILABLE" },
+    503,
+    { "Cache-Control": "no-store", "Retry-After": "60" },
+  );
+}
+
+function decodeXml(value) {
+  return String(value || "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/gi, "&").replace(/&quot;/gi, '"').replace(/&apos;/gi, "'")
+    .replace(/&#0*39;/gi, "'").replace(/&#x0*27;/gi, "'")
+    .replace(/&lt;/gi, "<").replace(/&gt;/gi, ">");
+}
+
+function xmlTagText(block, name) {
+  const re = new RegExp("<(?:[\\w.-]+:)?" + name + "\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?" + name + "\\s*>", "i");
+  const match = String(block || "").match(re);
+  return match ? decodeXml(match[1]).trim() : "";
+}
+
+function xmlAttribute(block, tagNames, attribute) {
+  for (const tag of tagNames) {
+    const re = new RegExp("<(?:[\\w.-]+:) ?".replace("? ", "?") + tag + "\\b[^>]*\\b" + attribute + "=[\"']([^\"']+)[\"'][^>]*>", "i");
+    const match = String(block || "").match(re);
+    if (match) return decodeXml(match[1]).trim();
+  }
+  return "";
+}
+
+function parseFallbackFeed(xml, feed) {
+  const rssItems = String(xml || "").match(/<item\b[^>]*>[\s\S]*?<\/item\s*>/gi) || [];
+  const atomItems = String(xml || "").match(/<entry\b[^>]*>[\s\S]*?<\/entry\s*>/gi) || [];
+  const articles = [];
+  for (const block of [...rssItems, ...atomItems].slice(0, 100)) {
+    const title = cleanDescription(xmlTagText(block, "title")).slice(0, 500);
+    let link = xmlTagText(block, "link") || xmlTagText(block, "id") || xmlAttribute(block, ["link"], "href");
+    link = decodeXml(link).trim().split("#", 1)[0];
+    if (!title || !/^https?:\/\//i.test(link)) continue;
+    const dateValue = xmlTagText(block, "pubDate") || xmlTagText(block, "published") || xmlTagText(block, "updated") || xmlTagText(block, "date");
+    const parsedDate = Date.parse(dateValue);
+    if (!Number.isFinite(parsedDate)) continue;
+    const descriptionRaw = xmlTagText(block, "description") || xmlTagText(block, "summary") || xmlTagText(block, "encoded") || xmlTagText(block, "content");
+    let image = xmlAttribute(block, ["content", "thumbnail", "enclosure"], "url") || xmlAttribute(block, ["image"], "href");
+    if (!image) {
+      const imgMatch = decodeXml(descriptionRaw).match(/<img\b[^>]*\bsrc=["']([^"']+)/i);
+      if (imgMatch) image = imgMatch[1];
+    }
+    try { if (image) image = new URL(image, link).href; } catch { image = ""; }
+    if (image && image.startsWith("http://")) image = "https://" + image.slice(7);
+    const article = { title, url: link.slice(0, 2000), source: feed.source, category: feed.category,
+      description: cleanDescription(descriptionRaw).slice(0, 500) || null,
+      image_url: image && image.startsWith("https://") ? image.slice(0, 2000) : null,
+      published_at: new Date(parsedDate).toISOString() };
+    if (isRecentArticle(article)) articles.push(article);
+  }
+  return articles;
+}
+
+async function supplementMissingCategories(articles) {
+  const counts = new Map(SITE_CATEGORIES.map(category => [category, 0]));
+  const seenUrls = new Set();
+  for (const article of articles) {
+    if (article?.category) counts.set(article.category, (counts.get(article.category) || 0) + 1);
+    if (article?.url) seenUrls.add(String(article.url).split("#", 1)[0]);
+  }
+  const missing = new Set(SITE_CATEGORIES.filter(category => (counts.get(category) || 0) < TARGET_PER_CATEGORY));
+  const feeds = FALLBACK_FEEDS.filter(feed => missing.has(feed.category));
+  if (!feeds.length) return [];
+  const results = await Promise.all(feeds.map(async feed => {
+    try {
+      const response = await fetch(feed.url, { headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; NazuafNewsBot/1.3; +https://nazuaf.com)",
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*;q=0.8",
+      }, signal: AbortSignal.timeout(7000) });
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      return { feed, articles: parseFallbackFeed((await response.text()).slice(0, 1000000), feed) };
+    } catch (error) {
+      console.warn("Fallback RSS failed:", feed.source, feed.category, String(error?.message || error));
+      return { feed, articles: [] };
+    }
+  }));
+  const byCategory = new Map(SITE_CATEGORIES.map(category => [category, []]));
+  for (const result of results) byCategory.get(result.feed.category).push(...result.articles);
+  const extra = [];
+  for (const category of missing) {
+    const candidates = (byCategory.get(category) || []).sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
+    let count = counts.get(category) || 0;
+    for (const article of candidates) {
+      if (count >= TARGET_PER_CATEGORY) break;
+      if (seenUrls.has(article.url)) continue;
+      seenUrls.add(article.url); extra.push(article); count++;
+    }
+    if (count < TARGET_PER_CATEGORY) console.warn("Category remains below target after fallback RSS:", category, count + "/" + TARGET_PER_CATEGORY);
+  }
+  return extra;
 }
 
 async function readNewsSnapshot(env) {
@@ -41,37 +173,36 @@ async function readNewsSnapshot(env) {
 
 async function rebuildNewsSnapshot(env) {
   if (!env.NEWS_CACHE) return null;
-
+  const cutoff = new Date(Date.now() - SNAPSHOT_MAX_AGE_DAYS * DAY_MS).toISOString();
+  const upperBound = new Date(Date.now() + DAY_MS).toISOString();
   const categoryResult = await env.DB.prepare(
-    "SELECT category, COUNT(*) AS count FROM articles GROUP BY category ORDER BY count DESC"
-  ).all();
+    "SELECT category, COUNT(*) AS count FROM articles WHERE published_at >= ? AND published_at <= ? GROUP BY category ORDER BY count DESC"
+  ).bind(cutoff, upperBound).all();
   const categories = categoryResult.results || [];
   const latestResult = await env.DB.prepare(
-    `SELECT ${ARTICLE_COLUMNS} FROM articles ORDER BY published_at DESC, id DESC LIMIT ?`
-  ).bind(GLOBAL_SNAPSHOT_LIMIT).all();
+    `SELECT ${ARTICLE_COLUMNS} FROM articles WHERE published_at >= ? AND published_at <= ? ORDER BY published_at DESC, id DESC LIMIT ?`
+  ).bind(cutoff, upperBound, GLOBAL_SNAPSHOT_LIMIT).all();
   const byCategory = Object.create(null);
-
-  // Category queries use the category/date composite index and only snapshot the newest items.
-  for (const item of categories) {
-    const category = String(item.category || "");
+  for (const category of SITE_CATEGORIES) {
     const result = await env.DB.prepare(
-      `SELECT ${ARTICLE_COLUMNS} FROM articles WHERE category = ? ORDER BY published_at DESC, id DESC LIMIT ?`
-    ).bind(category, CATEGORY_SNAPSHOT_LIMIT).all();
+      `SELECT ${ARTICLE_COLUMNS} FROM articles WHERE category = ? AND published_at >= ? AND published_at <= ? ORDER BY published_at DESC, id DESC LIMIT ?`
+    ).bind(category, cutoff, upperBound, CATEGORY_SNAPSHOT_LIMIT).all();
     byCategory[category] = result.results || [];
   }
-
+  const categoryCounts = new Map(categories.map(item => [String(item.category || ""), Number(item.count) || 0]));
+  const publicCategories = SITE_CATEGORIES.map(category => ({ category, count: categoryCounts.get(category) || 0 }))
+    .sort((a, b) => b.count - a.count);
   const snapshot = {
     version: 1,
+    snapshot_schema_version: 2,
+    freshness_window_days: SNAPSHOT_MAX_AGE_DAYS,
     generated_at: new Date().toISOString(),
     articles: latestResult.results || [],
-    categories,
+    categories: publicCategories,
     byCategory,
   };
   await env.NEWS_CACHE.put(NEWS_SNAPSHOT_KEY, JSON.stringify(snapshot), {
-    httpMetadata: {
-      contentType: "application/json; charset=utf-8",
-      cacheControl: "no-cache",
-    },
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-cache" },
   });
   return snapshot;
 }
@@ -112,6 +243,25 @@ export default {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
 
+    if (url.pathname === "/api/health") {
+      const snapshot = await readNewsSnapshot(env);
+      if (!snapshot) return snapshotUnavailable();
+      const freshArticles = (snapshot.articles || []).filter(isRecentArticle);
+      const generatedAt = Date.parse(snapshot.generated_at || "");
+      const ageSeconds = Number.isFinite(generatedAt) ? Math.max(0, Math.floor((Date.now() - generatedAt) / 1000)) : null;
+      return json({
+        ok: true,
+        snapshot_exists: true,
+        generated_at: snapshot.generated_at || null,
+        age_seconds: ageSeconds,
+        stale: ageSeconds === null || ageSeconds > 6 * 60 * 60,
+        freshness_window_days: SNAPSHOT_MAX_AGE_DAYS,
+        articles_available: freshArticles.length,
+        newest_published_at: freshArticles[0]?.published_at || null,
+        categories: snapshotCategories(snapshot),
+      }, 200, { "Cache-Control": "no-store" });
+    }
+
     if (url.pathname === "/api/ingest") {
       if (request.method !== "POST") return json({ ok: false, error: "Method Not Allowed" }, 405);
       const auth = request.headers.get("Authorization") || "";
@@ -120,7 +270,11 @@ export default {
       try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
 
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
-      const valid = articles.filter(a => a?.title && a?.url);
+      const fresh = articles.filter(isRecentArticle);
+      const rejectedStale = articles.length - fresh.length;
+      const valid = fresh.filter(a => a?.title && a?.url);
+      const fallbackArticles = await supplementMissingCategories(valid);
+      valid.push(...fallbackArticles);
       let updated = 0, added = 0;
 
       try {
@@ -202,7 +356,7 @@ export default {
         console.warn("Cache purge after ingest failed:", String(e?.message || e));
       }
 
-      return json({ ok: true, received: articles.length, valid: valid.length, updated, added,
+      return json({ ok: true, received: articles.length, valid: valid.length, fallback_added: fallbackArticles.length, rejected_stale_or_undated: rejectedStale, updated, added,
         with_images: valid.filter(a => a.image_url).length, snapshot_updated: snapshotUpdated,
         updated_at: new Date().toISOString() });
     }
@@ -216,32 +370,19 @@ export default {
       const offsetValue = Number(url.searchParams.get("offset")) || 0;
       const offset = Math.min(Math.max(offsetValue, 0), 1000000);
       const category = url.searchParams.get("category");
-      const headers = apiCacheHeaders("news-articles", 30, 120);
       const snapshot = await readNewsSnapshot(env);
-
-      if (snapshot) {
-        const collection = category
-          ? (snapshot.byCategory && snapshot.byCategory[category]) || []
-          : snapshot.articles;
-        const results = collection.slice(offset, offset + limit);
-        return json({ ok: true, articles: results.map(a => ({ ...a, description: cleanDescription(a.description) || null })), limit, offset }, 200, headers);
-      }
-
-      // Fallback for the first deploy or when R2 is unavailable. Indexes avoid full-table sorting.
-      const order = " ORDER BY published_at DESC, id DESC LIMIT ? OFFSET ?";
-      const query = category
-        ? env.DB.prepare(`SELECT ${ARTICLE_COLUMNS} FROM articles WHERE category = ?` + order).bind(category, limit, offset)
-        : env.DB.prepare(`SELECT ${ARTICLE_COLUMNS} FROM articles` + order).bind(limit, offset);
-      const { results } = await query.all();
-      return json({ ok: true, articles: results.map(a => ({ ...a, description: cleanDescription(a.description) || null })), limit, offset }, 200, headers);
+      if (!snapshot) return snapshotUnavailable();
+      const collection = category ? (snapshot.byCategory && snapshot.byCategory[category]) || [] : snapshot.articles;
+      const results = collection.filter(isRecentArticle).slice(offset, offset + limit);
+      return json({ ok: true, articles: results.map(a => ({ ...a, description: cleanDescription(a.description) || null })),
+        limit, offset, snapshot_generated_at: snapshot.generated_at || null }, 200, apiCacheHeaders("news-articles", 120));
     }
 
     if (url.pathname === "/api/categories") {
       const snapshot = await readNewsSnapshot(env);
-      const categories = snapshot
-        ? snapshot.categories
-        : (await env.DB.prepare("SELECT category, COUNT(*) AS count FROM articles GROUP BY category ORDER BY count DESC").all()).results;
-      return json({ ok: true, categories }, 200, apiCacheHeaders("news-categories", 60, 300));
+      if (!snapshot) return snapshotUnavailable();
+      return json({ ok: true, categories: snapshotCategories(snapshot), snapshot_generated_at: snapshot.generated_at || null },
+        200, apiCacheHeaders("news-categories", 300));
     }
 
     const siteName = env.SITE_NAME || "Nazuaf News";
