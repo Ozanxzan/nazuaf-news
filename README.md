@@ -7,12 +7,13 @@ This build reduces repeat D1 reads by caching public API responses at Cloudflare
 - RSS ingestion now uses a fair per-category target of 20 unique articles per cron run for all nine site categories. It logs any category that has fewer than 20 distinct items available from its current feeds; it does not fabricate articles. `NEWS_PER_CATEGORY_LIMIT` can override the default.
 
 - `/api/articles` reads from a single R2 snapshot when available, then slices the requested page/category in the Worker instead of querying D1 for every page view.
+- Freshness checks wrap `isRecentArticle` in an arrow callback. Passing it directly to `Array.filter` incorrectly treats the item index as the current timestamp, which filtered out all stories and also rejected incoming RSS articles.
 - `/api/categories` reads category names/counts from the same snapshot.
 - Public API responses use edge cache headers and cache tags. The ingest endpoint purges tagged API responses after a successful snapshot refresh.
 - The ingestion endpoint ensures three idempotent indexes exist on the existing D1 database: `(title, source)`, `(published_at, id)`, and `(category, published_at, id)`.
 - Listing/retention queries use index-friendly `ORDER BY published_at DESC, id DESC` instead of applying `julianday()` to every row.
 - The R2 snapshot stores the latest 2,000 global articles and up to 1,000 articles per category. D1 data is not deleted by this snapshot limit; only the existing retention rule for the exact `Berita` category remains.
-- If the R2 snapshot is not available yet, API endpoints fall back to D1 with cache headers, so the site can still serve data during initial setup.
+- If the R2 snapshot is unavailable, API endpoints return `503 SNAPSHOT_UNAVAILABLE`; run the ingestion workflow to rebuild the snapshot from D1.
 
 ## Required setup before deployment
 
