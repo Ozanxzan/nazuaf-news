@@ -54,7 +54,7 @@ function snapshotCategories(snapshot) {
   const byCategory = snapshot?.byCategory || {};
   return SITE_CATEGORIES.map(category => ({
     category,
-    count: Array.isArray(byCategory[category]) ? byCategory[category].filter(isRecentArticle).length : 0,
+    count: Array.isArray(byCategory[category]) ? byCategory[category].filter(article => isRecentArticle(article)).length : 0,
   })).sort((a, b) => b.count - a.count);
 }
 
@@ -246,7 +246,7 @@ export default {
     if (url.pathname === "/api/health") {
       const snapshot = await readNewsSnapshot(env);
       if (!snapshot) return snapshotUnavailable();
-      const freshArticles = (snapshot.articles || []).filter(isRecentArticle);
+      const freshArticles = (snapshot.articles || []).filter(article => isRecentArticle(article));
       const generatedAt = Date.parse(snapshot.generated_at || "");
       const ageSeconds = Number.isFinite(generatedAt) ? Math.max(0, Math.floor((Date.now() - generatedAt) / 1000)) : null;
       return json({
@@ -270,7 +270,7 @@ export default {
       try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
 
       const articles = Array.isArray(body?.articles) ? body.articles.slice(0, 500) : [];
-      const fresh = articles.filter(isRecentArticle);
+      const fresh = articles.filter(article => isRecentArticle(article));
       const rejectedStale = articles.length - fresh.length;
       const valid = fresh.filter(a => a?.title && a?.url);
       const fallbackArticles = await supplementMissingCategories(valid);
@@ -373,7 +373,7 @@ export default {
       const snapshot = await readNewsSnapshot(env);
       if (!snapshot) return snapshotUnavailable();
       const collection = category ? (snapshot.byCategory && snapshot.byCategory[category]) || [] : snapshot.articles;
-      const results = collection.filter(isRecentArticle).slice(offset, offset + limit);
+      const results = collection.filter(article => isRecentArticle(article)).slice(offset, offset + limit);
       return json({ ok: true, articles: results.map(a => ({ ...a, description: cleanDescription(a.description) || null })),
         limit, offset, snapshot_generated_at: snapshot.generated_at || null }, 200, apiCacheHeaders("news-articles", 120));
     }
