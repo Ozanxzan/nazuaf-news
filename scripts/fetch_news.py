@@ -36,6 +36,10 @@ FEEDS = [
     ("Media Indonesia", "Berita", "https://mediaindonesia.com/feed"),
     ("Kumparan", "Berita", "https://lapi.kumparan.com/v2.0/rss/"),
     ("CNA Indonesia", "Berita", "https://www.cna.id/api/v1/rss-outbound-feed?_format=xml"),
+    ("Tribunnews", "Berita", "https://www.tribunnews.com/rss"),
+    ("Okezone", "Berita", "https://www.okezone.com/rss"),
+    ("Sindonews", "Berita", "https://www.sindonews.com/feed"),
+    ("JPNN", "Berita", "https://www.jpnn.com/rss"),
 
     # Bisnis
     ("ANTARA", "Bisnis", "https://www.antaranews.com/rss/ekonomi.xml"),
@@ -50,6 +54,8 @@ FEEDS = [
     ("Kontan", "Bisnis", "https://rss.kontan.co.id/news/keuangan"),
     ("JawaPos", "Bisnis", "https://www.jawapos.com/ekonomi/rss"),
     ("CNA Indonesia", "Bisnis", "https://www.cna.id/api/v1/rss-outbound-feed?_format=xml&category=3321"),
+    ("IDX Channel", "Bisnis", "https://www.idxchannel.com/rss"),
+    ("Katadata", "Bisnis", "https://katadata.co.id/rss"),
 
     # Nasional
     ("ANTARA", "Nasional", "https://www.antaranews.com/rss/politik.xml"),
@@ -63,6 +69,10 @@ FEEDS = [
     ("ANTARA", "Teknologi", "https://www.antaranews.com/rss/tekno.xml"),
     ("CNN Indonesia", "Teknologi", "https://www.cnnindonesia.com/teknologi/rss"),
     ("detikINET", "Teknologi", "https://inet.detik.com/rss"),
+    ("Republika", "Teknologi", "https://www.republika.co.id/rss/tekno/"),
+    ("Liputan6", "Teknologi", "https://feed.liputan6.com/rss/tekno"),
+    ("DailySocial", "Teknologi", "https://dailysocial.id/feed/"),
+    ("Tech in Asia", "Teknologi", "https://www.techinasia.com/feed"),
 
     # Sains
     ("Kompas.com Sains", "Sains", "https://sains.kompas.com/rss"),
@@ -71,20 +81,28 @@ FEEDS = [
 
     # Gaming
     ("Gamebrott", "Gaming", "https://gamebrott.com/feed/"),
+    ("GameDaim", "Gaming", "https://gamedaim.com/feed/"),
 
     # Olahraga
     ("ANTARA", "Olahraga", "https://www.antaranews.com/rss/olahraga.xml"),
     ("ANTARA Sepakbola", "Olahraga", "https://www.antaranews.com/rss/sepakbola.xml"),
     ("CNA Indonesia", "Olahraga", "https://www.cna.id/api/v1/rss-outbound-feed?_format=xml&category=3246"),
+    ("detikSport", "Olahraga", "https://sport.detik.com/rss"),
+    ("Liputan6", "Olahraga", "https://feed.liputan6.com/rss/bola"),
 
     # Hiburan
     ("ANTARA", "Hiburan", "https://www.antaranews.com/rss/hiburan.xml"),
     ("CNN Indonesia", "Hiburan", "https://www.cnnindonesia.com/hiburan/rss"),
+    ("detikHot", "Hiburan", "https://hot.detik.com/rss"),
+    ("Liputan6", "Hiburan", "https://feed.liputan6.com/rss/showbiz"),
+    ("KapanLagi", "Hiburan", "https://www.kapanlagi.com/feed"),
 
     # Kesehatan
     ("Kementerian Kesehatan", "Kesehatan", "https://kemkes.go.id/id/rss/article/rilis-berita"),
     ("Kementerian Kesehatan", "Kesehatan", "https://kemkes.go.id/id/rss/article/artikel-kesehatan"),
     ("Kementerian Kesehatan", "Kesehatan", "https://kemkes.go.id/id/rss/article/tips-kesehatan"),
+    ("detikHealth", "Kesehatan", "https://health.detik.com/rss"),
+    ("Liputan6", "Kesehatan", "https://feed.liputan6.com/rss/health"),
 ]
 
 def clean_html(value):
