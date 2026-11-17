@@ -389,26 +389,29 @@ export default {
     const country = String(request.cf?.country || "unknown").toLowerCase();
     const html = `<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="no-referrer"><meta name="theme-color" content="#0b0f14">
+<meta name="referrer" content="no-referrer"><meta name="theme-color" content="#ffffff">
 <meta name="description" content="Nazuaf News - agregator berita Indonesia."><title>${siteName}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
 <style>
-:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#090d12;color:#eef2f7;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-a{color:inherit;text-decoration:none}button,input{font:inherit}.container{width:min(1120px,calc(100% - 28px));margin:auto}
-header{padding:34px 0 24px;border-bottom:1px solid #1b222c;position:sticky;top:0;background:rgba(9,13,18,.94);backdrop-filter:blur(14px);z-index:10}
-.logo{font-size:30px;font-weight:800;letter-spacing:-1px}.tagline{color:#8f9baa;margin:5px 0 0;font-size:14px}
-.search{margin-top:22px}.search input{width:100%;background:#111720;border:1px solid #27303c;color:#fff;border-radius:12px;padding:13px 15px;outline:none}
-.search input:focus{border-color:#52657d}.categories{display:flex;gap:8px;overflow-x:auto;padding:18px 0 4px;scrollbar-width:none}.categories::-webkit-scrollbar{display:none}
-.cat{white-space:nowrap;border:1px solid #27303c;background:#111720;color:#aeb8c5;padding:8px 13px;border-radius:999px;cursor:pointer}.cat.active{background:#eef2f7;color:#0a0e13;border-color:#eef2f7}
-main{padding:24px 0 50px}.status{color:#7f8a98;font-size:13px;margin-bottom:16px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.card{background:#10161e;border:1px solid #202936;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
-.thumb,.noimg{width:100%;aspect-ratio:16/9;object-fit:cover;background:#151c25}.noimg{background:linear-gradient(135deg,#111923,#1a2330);display:grid;place-items:center;color:#667384;font-size:13px}
-.card-body{padding:16px;display:flex;flex-direction:column;flex:1}.source{font-size:12px;color:#7fa7d8;margin-bottom:8px;font-weight:650}
-.title{font-size:17px;line-height:1.35;margin:0 0 10px;font-weight:750}.desc{color:#9ca7b5;font-size:13px;line-height:1.5;margin:0 0 14px}
-.meta{margin-top:auto;color:#687585;font-size:12px}.read{display:inline-block;margin-top:13px;color:#d9e3ef;font-size:13px;font-weight:650}
-.empty{padding:50px 20px;text-align:center;color:#7d8897;background:#10161e;border:1px solid #202936;border-radius:16px}.more-wrap{text-align:center;margin-top:24px}
-.more{border:1px solid #2b3644;background:#111720;color:#eef2f7;padding:11px 18px;border-radius:10px;cursor:pointer}.more:disabled{opacity:.5;cursor:default}
-footer{border-top:1px solid #1b222c;padding:24px 0 38px;color:#697585;font-size:12px}
-@media(max-width:850px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){header{padding-top:24px}.logo{font-size:27px}.grid{grid-template-columns:1fr}.title{font-size:18px}.container{width:min(100% - 20px,1120px)}}
+:root{color-scheme:light;--bg:#f7f7f5;--card:#ffffff;--ink:#111827;--muted:#6b7280;--faint:#9ca3af;--line:#e5e7eb;--shadow:0 10px 30px rgba(17,24,39,.08)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:inherit;text-decoration:none}button,input{font:inherit}.container{width:min(1180px,calc(100% - 28px));margin:auto}
+header{padding:34px 0 24px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(255,255,255,.92);backdrop-filter:blur(14px);z-index:10}
+.logo{font-family:"Plus Jakarta Sans",Inter,system-ui,sans-serif;font-size:30px;font-weight:800;letter-spacing:-1px}.tagline{color:var(--muted);margin:5px 0 0;font-size:14px}
+.search{margin-top:22px}.search input{width:100%;background:#fff;border:1px solid var(--line);color:var(--ink);border-radius:12px;padding:13px 15px;outline:none}
+.search input:focus{border-color:#111827}.categories{display:flex;gap:8px;overflow-x:auto;padding:18px 0 4px;scrollbar-width:none}.categories::-webkit-scrollbar{display:none}
+.cat{white-space:nowrap;border:1px solid var(--line);background:#fff;color:#4b5563;padding:8px 13px;border-radius:999px;cursor:pointer}.cat.active{background:#111827;color:#fff;border-color:#111827}
+main{padding:24px 0 50px}.status{color:var(--muted);font-size:13px;margin-bottom:16px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;overflow:hidden;display:flex;flex-direction:column;min-width:0;box-shadow:var(--shadow);transition:transform .2s ease,box-shadow .2s ease}
+.card:hover{transform:translateY(-2px)}
+.thumb,.noimg{width:100%;aspect-ratio:16/9;object-fit:cover;background:#e5e7eb}.noimg{background:linear-gradient(135deg,#f3f4f6,#e5e7eb);display:grid;place-items:center;color:#9ca3af;font-size:13px}
+.card-body{padding:16px;display:flex;flex-direction:column;flex:1}.source{font-size:12px;color:#111827;margin-bottom:8px;font-weight:700}
+.title{font-family:"Plus Jakarta Sans",Inter,system-ui,sans-serif;font-size:17px;line-height:1.35;margin:0 0 10px;font-weight:700}.desc{color:var(--muted);font-size:13px;line-height:1.5;margin:0 0 14px}
+.meta{margin-top:auto;color:var(--faint);font-size:12px}.read{display:inline-block;margin-top:13px;color:#111827;font-size:13px;font-weight:700}
+.empty{padding:50px 20px;text-align:center;color:var(--muted);background:#fff;border:1px solid var(--line);border-radius:20px}.more-wrap{text-align:center;margin-top:24px}
+.more{border:1px solid #111827;background:#111827;color:#fff;padding:11px 22px;border-radius:999px;cursor:pointer;font-weight:700}.more:disabled{opacity:.5;cursor:default}
+footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);font-size:12px}
+@media(max-width:850px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){header{padding-top:24px}.logo{font-size:27px}.grid{grid-template-columns:1fr}.title{font-size:18px}.container{width:min(100% - 20px,1180px)}}
 </style></head><body><header><div class="container"><div class="logo"><a href="https://nazuaf.com">${siteName}</a></div>
 <div class="tagline">Berita Indonesia, dikumpulkan dalam satu tempat.</div>
 <div class="search"><input id="search" type="search" placeholder="Cari berita..." autocomplete="off"></div><div id="categories" class="categories"></div></div></header>
