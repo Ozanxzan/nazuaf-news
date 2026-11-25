@@ -308,43 +308,91 @@ function cleanParagraphs(rawList) {
   return out;
 }
 
-function extractFromJsonLd(html) {
-  // Banyak portal Indonesia (CNN, detik, Kompas, Liputan6, dll) menyertakan
-  // NewsArticle JSON-LD berisi articleBody utuh — jalur paling bersih.
+function jsonLdNodes(html) {
+  const out = [];
   const scripts = [...String(html).matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script\s*>/gi)];
   for (const m of scripts) {
     let data;
     try { data = JSON.parse(m[1].trim()); } catch { continue; }
     const nodes = Array.isArray(data) ? data : (data && data["@graph"] ? data["@graph"] : [data]);
-    for (const node of nodes) {
-      if (!node || typeof node !== "object") continue;
-      const type = String(node["@type"] || "");
-      const body = node.articleBody;
-      if (/Article/.test(type) && typeof body === "string" && body.trim().length >= 500) {
-        const parts = body.split(/\n+/).map((p) => p.trim()).filter((p) => p.length >= 40 && !JUNK_PARA_RE.test(p) && !JUNK_CONTAINS_RE.test(p));
-        if (parts.length >= 3) return { paragraphs: parts.slice(0, MAX_PARAGRAPHS), author: extractAuthorFromJsonLd(node) };
-      }
+    for (const n of nodes) if (n && typeof n === "object") out.push(n);
+  }
+  return out;
+}
+function extractFromJsonLd(html) {
+  // Banyak portal Indonesia (CNN, detik, Kompas, Liputan6, dll) menyertakan
+  // NewsArticle JSON-LD berisi articleBody utuh — jalur paling bersih.
+  const nodes = jsonLdNodes(html);
+  for (const node of nodes) {
+    const type = String(node["@type"] || "");
+    const body = node.articleBody;
+    if (/Article/.test(type) && typeof body === "string" && body.trim().length >= 500) {
+      const parts = body.split(/\n+/).map((p) => p.trim()).filter((p) => p.length >= 40 && !JUNK_PARA_RE.test(p) && !JUNK_CONTAINS_RE.test(p));
+      if (parts.length >= 3) return { paragraphs: parts.slice(0, MAX_PARAGRAPHS), author: extractAuthorFromJsonLd(node, nodes) };
     }
   }
   return null;
 }
-function extractAuthorFromJsonLd(node) {
-  const a = node.author;
-  if (!a) return "";
-  if (typeof a === "string") return a.slice(0, 120);
-  if (typeof a === "object" && a.name) return String(a.name).slice(0, 120);
-  if (Array.isArray(a) && a[0]?.name) return String(a[0].name).slice(0, 120);
+function extractAuthorFromJsonLdGraph(html) {
+  // Nama penulis dari graph JSON-LD, terpisah dari articleBody — tidak semua
+  // situs menyertakan articleBody di JSON-LD, tapi node Person penulisnya ada.
+  const nodes = jsonLdNodes(html);
+  for (const node of nodes) {
+    if (!/Article/.test(String(node["@type"] || ""))) continue;
+    const a = extractAuthorFromJsonLd(node, nodes);
+    if (a) return a;
+  }
   return "";
+}
+function nameFromAuthorUrl(u) {
+  // Hanya untuk URL arsip penulis (/author/nama/) — ubah slug jadi nama tampil.
+  try {
+    const url = new URL(String(u));
+    if (!/\/author\//i.test(url.pathname)) return "";
+    const slug = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || "");
+    const words = slug.replace(/[-_]+/g, " ").trim().split(/\s+/).filter((w) => /^[a-zA-Z']+$/.test(w));
+    if (!words.length || words.join(" ").length > 60) return "";
+    return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  } catch { return ""; }
+}
+function resolveAuthorValue(a, nodes) {
+  if (!a) return "";
+  if (typeof a === "string") {
+    const t = a.trim();
+    if (!t) return "";
+    if (/^https?:\/\//i.test(t)) return nameFromAuthorUrl(t); // URL -> coba slug /author/
+    return t.slice(0, 120);
+  }
+  if (Array.isArray(a)) {
+    for (const item of a) { const r = resolveAuthorValue(item, nodes); if (r) return r; }
+    return "";
+  }
+  if (typeof a === "object") {
+    if (typeof a.name === "string" && a.name.trim()) return a.name.trim().slice(0, 120);
+    if (typeof a["@id"] === "string") {
+      // Penulis sering hanya referensi @id — cari node Person/Organization di graph yang sama.
+      const hit = (nodes || []).find((n) => n && typeof n === "object" && n["@id"] === a["@id"]);
+      if (hit && typeof hit.name === "string" && hit.name.trim()) return hit.name.trim().slice(0, 120);
+      return nameFromAuthorUrl(a["@id"]);
+    }
+    if (typeof a.url === "string") return nameFromAuthorUrl(a.url);
+  }
+  return "";
+}
+function extractAuthorFromJsonLd(node, nodes) {
+  return resolveAuthorValue(node.author, nodes);
 }
 function extractAuthorMeta(html) {
   const m = String(html).match(/<meta[^>]+(?:name|property)=["'](?:author|article:author)["'][^>]+content=["']([^"']+)["']/i)
     || String(html).match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:author|article:author)["']/i);
-  return m ? decodeHtmlEntities(m[1]).trim().slice(0, 120) : "";
+  const v = m ? decodeHtmlEntities(m[1]).trim().slice(0, 120) : "";
+  if (/^https?:\/\//i.test(v)) return ""; // URL bukan nama orang (mis. GameDaim isi link Facebook)
+  return v;
 }
 
 function extractArticleBody(html, url) {
   const raw = String(html || "").slice(0, MAX_HTML_BYTES);
-  let author = extractAuthorMeta(raw);
+  let author = extractAuthorFromJsonLdGraph(raw) || extractAuthorMeta(raw);
   const viaJsonLd = extractFromJsonLd(raw);
   if (viaJsonLd) {
     if (!author && viaJsonLd.author) author = viaJsonLd.author;
@@ -856,7 +904,7 @@ function readerHtml(siteName, row, body, related) {
     ? '<img class="article-hero" referrerpolicy="no-referrer" src="' + escHtml(String(row.image_url).replace(/^http:/, "https:")) + '" alt="" onerror="this.remove()">'
     : "";
   const byline = '<div class="byline"><span class="src">' + escHtml(row.source || "Berita") + '</span><span>' + escHtml(fmtDateId(row.published_at)) + '</span>'
-    + (body?.author ? "<span>Penulis: " + escHtml(body.author) + "</span>" : "")
+    + (body?.author && !/^https?:\/\//i.test(body.author) ? "<span>Penulis: " + escHtml(body.author) + "</span>" : "")
     + (body ? "<span>Arsip dibaca " + escHtml(timeAgoId(body.scraped_at)) + "</span>" : "") + "</div>";
   let content;
   if (body) {
@@ -866,7 +914,7 @@ function readerHtml(siteName, row, body, related) {
       + 'Baca versi asli di situs sumber: <a href="' + escHtml(row.url) + '" target="_blank" rel="noopener noreferrer">' + escHtml(row.url) + "</a></div>";
   } else {
     content = '<div class="notice-box"><b>Isi penuh artikel ini belum tersimpan.</b><br>'
-      + "Scraper sedang mengambil isi dari situs sumber — coba buka halaman ini lagi sebentar lagi. Sementara itu, kamu bisa membaca langsung di situs sumbernya.</div>"
+      + "Server sedang mengambil isi dari situs sumber — coba buka halaman ini lagi sebentar lagi. Sementara itu, kamu bisa membaca langsung di situs sumbernya.</div>"
       + (row.description ? '<div class="article-body"><p>' + escHtml(row.description) + "</p></div>" : "")
       + '<div class="source-box">Baca artikel lengkap di situs sumber: <a href="' + escHtml(row.url) + '" target="_blank" rel="noopener noreferrer">' + escHtml(row.url) + "</a></div>";
   }
