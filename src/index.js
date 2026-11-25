@@ -836,8 +836,8 @@ function buildTicker(){if(!s.all.length)return;var items=s.all.slice(0,10).map(f
 function render(){var items=s.all.filter(function(a){return !s.search||((a.title||"")+" "+(a.description||"")+" "+(a.source||"")).toLowerCase().indexOf(s.search)>=0});
 buildHero();buildTicker();
 var gridItems=(s.heroBuilt&&!s.category&&!s.search)?items.slice(5):items;
-empty.hidden=gridItems.length!==0;news.innerHTML=gridItems.map(cardHtml).join("");
-status.textContent=items.length+" berita ditampilkan";more.disabled=s.loading||s.done;more.textContent=s.done?"Semua berita sudah dimuat":s.loading?"Memuat...":"Muat lebih banyak";
+empty.hidden=gridItems.length!==0||(s.loading&&items.length===0);news.innerHTML=gridItems.map(cardHtml).join("");
+status.textContent=(s.loading&&items.length===0)?"Memuat berita...":items.length+" berita ditampilkan";more.disabled=s.loading||s.done;more.textContent=s.done?"Semua berita sudah dimuat":s.loading?"Memuat...":"Muat lebih banyak";
 secTitle.textContent=s.category?s.category:"Berita Terbaru"}
 async function load(reset){if(s.loading)return;if(reset){s.offset=0;s.done=false;s.all=[];s.heroBuilt=false;hero.innerHTML="";news.innerHTML=""}if(s.done)return;s.loading=true;render();try{var p=new URLSearchParams({limit:String(size),offset:String(s.offset)});if(s.category)p.set("category",s.category);var r=await fetch("/api/articles?"+p);if(!r.ok)throw Error("HTTP "+r.status);var d=await r.json(),a=Array.isArray(d.articles)?d.articles:[];s.all=reset?a:s.all.concat(a);s.offset+=a.length;if(a.length<size)s.done=true}catch(e){status.textContent="Gagal memuat berita. Coba lagi.";console.error(e)}finally{s.loading=false;render()}}
 async function loadCats(){try{var r=await fetch("/api/categories");if(!r.ok)throw Error("HTTP "+r.status);var d=await r.json(),a=Array.isArray(d.categories)?d.categories:[];cats.innerHTML='<button class="navlink active" data-category="">Semua</button>'+a.map(function(x){return '<button class="navlink" data-category="'+esc(x.category)+'">'+esc(x.category)+' <span class="count">('+esc(x.count)+')</span></button>'}).join("");
