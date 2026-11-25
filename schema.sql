@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS articles (
   description TEXT,
   image_url TEXT,
   published_at TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  body_status TEXT NOT NULL DEFAULT 'pending',
+  body_scraped_at TEXT,
+  body_error TEXT
 );
 
 -- Query-performance indexes. The Worker also creates these idempotently on ingest
@@ -17,3 +20,4 @@ CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
 CREATE INDEX IF NOT EXISTS idx_articles_title_source ON articles(title, source);
 CREATE INDEX IF NOT EXISTS idx_articles_published_id ON articles(published_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_category_published_id ON articles(category, published_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_articles_body_pending ON articles(body_status, published_at DESC, id DESC);

@@ -28,3 +28,25 @@ This build reduces repeat D1 reads by caching public API responses at Cloudflare
 - Snapshot responses intentionally expose only the newest 2,000 global articles and newest 1,000 per category through the public API. The underlying D1 database is retained; the snapshot is a read-optimized view.
 - If the ingest response reports `D1 updated but R2 news snapshot refresh failed`, the D1 write has already completed. Check the `NEWS_CACHE` R2 binding/bucket, then rerun the workflow to rebuild the snapshot.
 - No secrets or API tokens are included in this ZIP.
+
+## v2 — Scraper isi penuh + tema portal (25 Nov 2026)
+
+- **Scraper isi berita**: Worker mengambil isi penuh artikel dari situs sumber
+  (JSON-LD `articleBody` bila ada, jika tidak ekstraksi paragraf generik),
+  menyimpannya sebagai JSON di R2 `nazuaf-news-cache` dengan prefix
+  `news-bodies/{id}.json`, dan mencatat status di D1 (`body_status`:
+  `pending`/`done`/`failed`, `body_scraped_at`, `body_error`).
+  Migrasi kolom: `migrations/0003_body_columns.sql` (sudah diterapkan ke D1 produksi).
+- **Pemicu scrape**: cron Worker yang sudah ada (tiap 3 jam, 20 artikel terbaru
+  yang belum tersimpan) + otomatis setelah tiap ingest (10 artikel) +
+  on-demand saat halaman baca dibuka + manual `POST /api/scrape`
+  (auth `INGEST_TOKEN` atau `SCRAPE_TOKEN`).
+- **Halaman baca**: `/baca/{id}` (alias `/artikel/{id}`) menampilkan isi penuh
+  dari R2 beserta atribusi sumber dan tautan ke artikel asli; kalau isi belum
+  tersimpan, tampil deskripsi + tombol ke sumber dan scrape dipicu di latar belakang.
+  API: `GET /api/article/{id}` mengembalikan metadata + isi (bila ada).
+- **Tema portal**: header gelap + logo merah, nav kategori sticky, ticker
+  TERKINI, hero story + 4 berita samping, grid kartu dengan badge kategori
+  berwarna dan waktu relatif ("2 jam lalu"), halaman baca ala portal berita.
+- Endpoint lama (`/api/articles`, `/api/categories`, `/api/ingest`, `/api/health`)
+  tidak berubah bentuk responsnya. Ingest GitHub Actions tidak diubah.
